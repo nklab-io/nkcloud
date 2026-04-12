@@ -127,19 +127,32 @@ def get_current_user(request: Request) -> dict | None:
     return user
 
 
-def set_session_cookie(response: JSONResponse, user_id: str, username: str):
+def _is_secure_request(request: Request) -> bool:
+    """Detect HTTPS: direct TLS, reverse-proxy header, or explicit env override."""
+    forced = os.getenv("NKCLOUD_COOKIE_SECURE", "").lower()
+    if forced in ("1", "true", "yes"):
+        return True
+    if forced in ("0", "false", "no"):
+        return False
+    if request.url.scheme == "https":
+        return True
+    proto = request.headers.get("x-forwarded-proto", "").lower()
+    return proto == "https"
+
+
+def set_session_cookie(response: JSONResponse, user_id: str, username: str, request: Request):
     response.set_cookie(
         key=config.SESSION_COOKIE,
         value=create_session_token(user_id, username),
         max_age=config.SESSION_TTL_SECONDS,
         httponly=True,
         samesite="lax",
-        secure=True,
+        secure=_is_secure_request(request),
         path="/",
     )
 
 
-def set_csrf_cookie(response: JSONResponse):
+def set_csrf_cookie(response: JSONResponse, request: Request):
     csrf_token = secrets.token_urlsafe(32)
     response.set_cookie(
         key=config.CSRF_COOKIE,
@@ -147,7 +160,7 @@ def set_csrf_cookie(response: JSONResponse):
         max_age=config.SESSION_TTL_SECONDS,
         httponly=False,  # JS needs to read this
         samesite="lax",
-        secure=True,
+        secure=_is_secure_request(request),
         path="/",
     )
 
@@ -268,8 +281,8 @@ def setup(payload: SetupPayload, request: Request):
     record_audit(user_id, username, "setup", ip=get_client_ip(request))
 
     response = JSONResponse({"ok": True})
-    set_session_cookie(response, user_id, username)
-    set_csrf_cookie(response)
+    set_session_cookie(response, user_id, username, request)
+    set_csrf_cookie(response, request)
     return response
 
 
@@ -315,8 +328,8 @@ def login(payload: LoginPayload, request: Request):
     record_audit(user["id"], user["username"], "login", ip=client_ip)
 
     response = JSONResponse({"ok": True})
-    set_session_cookie(response, user["id"], user["username"])
-    set_csrf_cookie(response)
+    set_session_cookie(response, user["id"], user["username"], request)
+    set_csrf_cookie(response, request)
     return response
 
 
@@ -426,8 +439,8 @@ def register_via_invite(token: str, payload: RegisterPayload, request: Request):
 
     # Auto-login
     response = JSONResponse({"ok": True, "username": username})
-    set_session_cookie(response, user_id, username)
-    set_csrf_cookie(response)
+    set_session_cookie(response, user_id, username, request)
+    set_csrf_cookie(response, request)
     return response
 
 
