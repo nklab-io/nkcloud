@@ -1,0 +1,9 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+python-multipart==0.0.20
+aiofiles==24.1.0
+Pillow==11.2.1
+pillow-heif==0.22.0
+itsdangerous==2.2.0
+wsgidav==4.3.3
+cheroot==10.0.1

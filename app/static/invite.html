@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NkCloud</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f1117; color: #e4e6ed; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+        .invite-box { background: #1a1d27; border: 1px solid #2d3148; border-radius: 16px; padding: 48px 40px; width: 400px; text-align: center; }
+        .logo { font-size: 28px; font-weight: 700; margin-bottom: 8px; color: #6c8cff; }
+        .logo span { color: #e4e6ed; }
+        .subtitle { color: #8b8fa3; font-size: 14px; margin-bottom: 32px; }
+        .field { margin-bottom: 12px; }
+        input { width: 100%; padding: 14px 16px; background: #242836; border: 1px solid #2d3148; border-radius: 10px; color: #e4e6ed; font-size: 15px; outline: none; transition: border-color 0.2s; }
+        input:focus { border-color: #6c8cff; }
+        input::placeholder { color: #5a5e72; }
+        button { width: 100%; padding: 14px; margin-top: 16px; background: #6c8cff; color: #fff; border: none; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+        button:hover { background: #8ba6ff; }
+        button:disabled { background: #3d4560; cursor: not-allowed; }
+        .error { color: #ff6b6b; font-size: 13px; margin-top: 12px; min-height: 20px; }
+        .status { color: #8b8fa3; font-size: 14px; margin-bottom: 16px; }
+        .invalid { color: #ff6b6b; }
+        .lang-select { position: fixed; bottom: 16px; right: 16px; padding: 6px 10px; background: #242836; border: 1px solid #2d3148; border-radius: 6px; color: #8b8fa3; font-size: 12px; outline: none; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="invite-box">
+        <div class="logo">Nk<span>Cloud</span></div>
+        <div class="subtitle" data-i18n="invite.title"></div>
+        <div class="status" id="status" data-i18n="invite.validating"></div>
+        <form id="registerForm" style="display:none">
+            <div class="field"><input type="text" id="username" data-i18n-placeholder="setup.username" autocomplete="username" autofocus></div>
+            <div class="field"><input type="password" id="password" data-i18n-placeholder="setup.password" autocomplete="new-password"></div>
+            <div class="field"><input type="password" id="password2" data-i18n-placeholder="setup.password_confirm" autocomplete="new-password"></div>
+            <button type="submit" id="btn" data-i18n="invite.submit"></button>
+            <div class="error" id="error"></div>
+        </form>
+    </div>
+    <div id="langSelect"></div>
+    <script type="module">
+        import { initI18n, t, setLang, langSelectorHtml } from '/static/js/i18n.js';
+        await initI18n();
+        document.getElementById('langSelect').innerHTML = langSelectorHtml();
+        window._switchLang = async (lang) => { await setLang(lang); };
+
+        const token = window.location.pathname.split('/invite/')[1];
+        const form = document.getElementById('registerForm');
+        const status = document.getElementById('status');
+        const btn = document.getElementById('btn');
+        const err = document.getElementById('error');
+
+        try {
+            const res = await fetch(`/api/invite/${token}`);
+            if (res.ok) {
+                status.textContent = t('invite.valid');
+                form.style.display = 'block';
+            } else {
+                const data = await res.json();
+                status.textContent = data.detail || t('invite.invalid');
+                status.classList.add('invalid');
+            }
+        } catch (ex) {
+            status.textContent = t('common.error_network');
+            status.classList.add('invalid');
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            err.textContent = '';
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value;
+            const password2 = document.getElementById('password2').value;
+            if (!username) { err.textContent = t('setup.err_username'); return; }
+            if (password.length < 6) { err.textContent = t('setup.err_password_short'); return; }
+            if (password !== password2) { err.textContent = t('setup.err_password_mismatch'); return; }
+            btn.disabled = true;
+            btn.textContent = t('invite.submitting');
+            try {
+                const res = await fetch(`/api/invite/${token}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password }),
+                });
+                if (res.ok) { window.location.href = '/'; }
+                else { const data = await res.json(); err.textContent = data.detail || t('invite.error'); }
+            } catch (ex) { err.textContent = t('common.error_network'); }
+            finally { btn.disabled = false; btn.textContent = t('invite.submit'); }
+        });
+    </script>
+</body>
+</html>

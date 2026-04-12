@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NkCloud</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f1117;
+            color: #e4e6ed;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .login-box {
+            background: #1a1d27;
+            border: 1px solid #2d3148;
+            border-radius: 16px;
+            padding: 48px 40px;
+            width: 380px;
+            text-align: center;
+        }
+        .logo { font-size: 28px; font-weight: 700; margin-bottom: 8px; color: #6c8cff; }
+        .logo span { color: #e4e6ed; }
+        .subtitle { color: #8b8fa3; font-size: 14px; margin-bottom: 32px; }
+        .field { margin-bottom: 12px; }
+        input { width: 100%; padding: 14px 16px; background: #242836; border: 1px solid #2d3148; border-radius: 10px; color: #e4e6ed; font-size: 15px; outline: none; transition: border-color 0.2s; }
+        input:focus { border-color: #6c8cff; }
+        input::placeholder { color: #5a5e72; }
+        button { width: 100%; padding: 14px; margin-top: 16px; background: #6c8cff; color: #fff; border: none; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+        button:hover { background: #8ba6ff; }
+        button:disabled { background: #3d4560; cursor: not-allowed; }
+        .error { color: #ff6b6b; font-size: 13px; margin-top: 12px; min-height: 20px; }
+        .lang-select { position: fixed; bottom: 16px; right: 16px; padding: 6px 10px; background: #242836; border: 1px solid #2d3148; border-radius: 6px; color: #8b8fa3; font-size: 12px; outline: none; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <div class="logo">Nk<span>Cloud</span></div>
+        <div class="subtitle" data-i18n="common.brand"></div>
+        <form id="loginForm">
+            <div class="field">
+                <input type="text" id="username" data-i18n-placeholder="login.username" autocomplete="username" autofocus>
+            </div>
+            <div class="field">
+                <input type="password" id="password" data-i18n-placeholder="login.password" autocomplete="current-password">
+            </div>
+            <button type="submit" id="btn" data-i18n="login.submit"></button>
+            <div class="error" id="error"></div>
+        </form>
+    </div>
+    <div id="langSelect"></div>
+    <script type="module">
+        import { initI18n, t, applyI18n, setLang, langSelectorHtml } from '/static/js/i18n.js';
+        await initI18n();
+        document.getElementById('langSelect').innerHTML = langSelectorHtml();
+        window._switchLang = async (lang) => { await setLang(lang); };
+
+        const form = document.getElementById('loginForm');
+        const btn = document.getElementById('btn');
+        const err = document.getElementById('error');
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            err.textContent = '';
+            btn.disabled = true;
+            btn.textContent = t('login.submitting');
+            try {
+                const res = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: document.getElementById('username').value.trim(),
+                        password: document.getElementById('password').value,
+                    }),
+                });
+                if (res.ok) {
+                    window.location.href = '/';
+                } else {
+                    const data = await res.json();
+                    err.textContent = data.detail || t('login.error');
+                }
+            } catch (ex) {
+                err.textContent = t('common.error_network');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = t('login.submit');
+            }
+        });
+    </script>
+</body>
+</html>

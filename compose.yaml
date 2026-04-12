@@ -1,0 +1,18 @@
+services:
+  nkcloud:
+    build: .
+    container_name: nkcloud
+    restart: unless-stopped
+    ports:
+      - "8000:8000"    # Web UI
+      - "8001:8001"    # WebDAV
+    env_file:
+      - .env
+    volumes:
+      - ./storage:/data:rw       # Your files
+      - ./data:/app/data:rw      # Database, thumbnails, config
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"

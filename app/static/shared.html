@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NkCloud</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .share-container { max-width: 700px; margin: 60px auto; padding: 0 20px; }
+        .share-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px; padding: 32px; }
+        .share-title { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
+        .share-meta { color: var(--text-secondary); font-size: 13px; margin-bottom: 24px; }
+        .pw-form { display: flex; gap: 8px; margin-bottom: 24px; }
+        .pw-form input { flex: 1; padding: 10px 14px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 8px; color: var(--text-primary); font-size: 14px; outline: none; }
+        .pw-form input:focus { border-color: var(--accent); }
+        .pw-form button { padding: 10px 20px; background: var(--accent); color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; }
+        .download-btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 24px; background: var(--accent); color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 15px; font-weight: 600; text-decoration: none; }
+        .download-btn:hover { background: var(--accent-hover); }
+        .file-list { list-style: none; }
+        .file-list li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+        .file-list li:last-child { border-bottom: none; }
+        .file-list .name { flex: 1; }
+        .file-list .size { color: var(--text-secondary); font-size: 13px; }
+        .file-list a { color: var(--accent); text-decoration: none; font-size: 13px; }
+        .expired { color: var(--danger); text-align: center; padding: 40px; }
+        .error-msg { color: var(--danger); font-size: 13px; margin-top: 8px; }
+        .lang-select { position: fixed; bottom: 16px; right: 16px; padding: 6px 10px; background: #242836; border: 1px solid #2d3148; border-radius: 6px; color: #8b8fa3; font-size: 12px; outline: none; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="share-container">
+        <div class="share-card" id="content">
+            <div style="text-align:center; padding:40px; color:var(--text-secondary)" data-i18n="shared_page.loading"></div>
+        </div>
+    </div>
+    <div id="langSelect"></div>
+    <script type="module">
+        import { initI18n, t, setLang, langSelectorHtml } from '/static/js/i18n.js';
+        await initI18n();
+        document.getElementById('langSelect').innerHTML = langSelectorHtml();
+        window._switchLang = async (lang) => { await setLang(lang); load(); };
+
+        const token = window.location.pathname.split('/s/')[1];
+        const container = document.getElementById('content');
+
+        function formatSize(bytes) {
+            if (!bytes) return '';
+            const u = ['B','KB','MB','GB','TB'];
+            let i = 0;
+            while (bytes >= 1024 && i < u.length - 1) { bytes /= 1024; i++; }
+            return bytes.toFixed(i > 0 ? 1 : 0) + ' ' + u[i];
+        }
+
+        function renderFile(info) {
+            container.innerHTML = `
+                <div class="share-title">${info.name}</div>
+                <div class="share-meta">${formatSize(info.size)}</div>
+                <a href="/api/public/${token}/download" class="download-btn">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    ${t('shared_page.download')}
+                </a>`;
+        }
+
+        function renderDir(info) {
+            const items = info.items || [];
+            container.innerHTML = `
+                <div class="share-title">${info.name}</div>
+                <div class="share-meta">${items.length} items</div>
+                <a href="/api/public/${token}/download" class="download-btn" style="margin-bottom:20px">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    ${t('shared_page.download_all')}
+                </a>
+                <ul class="file-list">
+                    ${items.map(f => `<li>
+                        <span class="name">${f.is_dir ? '&#128193; ' : ''}${f.name}</span>
+                        <span class="size">${f.is_dir ? '' : formatSize(f.size)}</span>
+                        ${!f.is_dir ? `<a href="/api/public/${token}/download?path=${encodeURIComponent(f.name)}">${t('shared_page.download')}</a>` : ''}
+                    </li>`).join('')}
+                </ul>`;
+        }
+
+        function renderPassword() {
+            container.innerHTML = `
+                <div class="share-title">${t('shared_page.password_required')}</div>
+                <div class="pw-form">
+                    <input type="password" id="pw" placeholder="${t('shared_page.password_placeholder')}" autofocus>
+                    <button onclick="window._verifyPw()">${t('shared_page.password_submit')}</button>
+                </div>
+                <div class="error-msg" id="pwError"></div>`;
+            document.getElementById('pw').addEventListener('keydown', e => { if (e.key === 'Enter') window._verifyPw(); });
+        }
+
+        window._verifyPw = async () => {
+            const pw = document.getElementById('pw').value;
+            try {
+                const res = await fetch(`/api/public/${token}/verify`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: pw }),
+                });
+                if (!res.ok) { document.getElementById('pwError').textContent = t('shared_page.password_wrong'); return; }
+                const data = await res.json();
+                if (data.is_directory) renderDir(data);
+                else renderFile(data);
+            } catch { document.getElementById('pwError').textContent = t('common.error_network'); }
+        };
+
+        async function load() {
+            try {
+                const res = await fetch(`/api/public/${token}`);
+                if (res.status === 410) { container.innerHTML = `<div class="expired">${t('shared_page.not_found')}</div>`; return; }
+                if (!res.ok) { container.innerHTML = `<div class="expired">${t('shared_page.not_found')}</div>`; return; }
+                const data = await res.json();
+                if (data.needs_password) { renderPassword(); return; }
+                if (data.is_directory) renderDir(data);
+                else renderFile(data);
+            } catch { container.innerHTML = `<div class="expired">${t('common.error_network')}</div>`; }
+        }
+        window.load = load;
+        load();
+    </script>
+</body>
+</html>

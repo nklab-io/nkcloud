@@ -1,0 +1,39 @@
+# Environment & secrets
+.env
+*.env.local
+
+# Database & app data
+data/
+*.db
+*.db-journal
+
+# Thumbnails & upload chunks
+thumbs/
+chunks/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Homelab-specific docs (not for public repo)
+CLAUDE.md
+
+# Claude Code local config
+.claude/
+
+# Personal screenshot staging (originals live in docs/screenshots/)
+Photo/
