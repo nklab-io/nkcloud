@@ -607,7 +607,7 @@ async function _loadSharesList() {
                     <span style="font-weight:500;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(s.path)}">${escapeHtml(name)}</span>
                     ${hasPw ? `<span style="font-size:11px;background:var(--bg-tertiary);padding:2px 8px;border-radius:4px;color:var(--text-secondary)">${t('share.password_tag')}</span>` : ''}
                     ${expired ? `<span style="font-size:11px;background:var(--danger-dim);padding:2px 8px;border-radius:4px;color:var(--danger)">${t('share.expired')}</span>` : ''}
-                    <button class="btn-icon" onclick="window._deleteShare('${s.id}')" title="刪除" style="flex-shrink:0">
+                    <button class="btn-icon" onclick="window._deleteShare('${s.id}')" title="${t('common.delete')}" style="flex-shrink:0">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                     </button>
                 </div>
@@ -834,7 +834,7 @@ async function uploadSimple(file, fillEl, statusEl) {
             if (xhr.status >= 200 && xhr.status < 300) resolve();
             else reject(new Error(`HTTP ${xhr.status}`));
         });
-        xhr.addEventListener('error', () => reject(new Error('網路錯誤')));
+        xhr.addEventListener('error', () => reject(new Error(t('common.error_network'))));
         xhr.send(fd);
     });
 }
@@ -1125,7 +1125,7 @@ async function _renderInvitesTab(container) {
             html += '</tbody></table>';
         }
         container.innerHTML = html;
-    } catch (e) { container.innerHTML = `<div style="color:var(--danger)">載入失敗：${escapeHtml(e.message)}</div>`; }
+    } catch (e) { container.innerHTML = `<div style="color:var(--danger)">${t('common.error_load')}: ${escapeHtml(e.message)}</div>`; }
 }
 
 async function _renderUsersTab(container) {
@@ -1147,10 +1147,10 @@ async function _renderUsersTab(container) {
                 : `<span class="status-dot active"></span>${t('admin.user_active')}`;
             let actions = '';
             if (!isOwner && !isSelf) {
-                actions += `<button class="btn-icon" onclick="window._toggleUser('${u.id}',${u.is_disabled ? 0 : 1})" title="${u.is_disabled ? '啟用' : '停用'}" style="margin-right:4px">
+                actions += `<button class="btn-icon" onclick="window._toggleUser('${u.id}',${u.is_disabled ? 0 : 1})" title="${u.is_disabled ? t('admin.user_active') : t('admin.user_disabled')}" style="margin-right:4px">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${u.is_disabled ? 'var(--success)' : 'var(--text-secondary)'}" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
                 </button>`;
-                actions += `<button class="btn-icon" onclick="window._promptDeleteUser('${u.id}','${escapeHtml(u.username)}')" title="刪除">
+                actions += `<button class="btn-icon" onclick="window._promptDeleteUser('${u.id}','${escapeHtml(u.username)}')" title="${t('common.delete')}">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                 </button>`;
             }
@@ -1172,7 +1172,7 @@ async function _renderUsersTab(container) {
         }
         html += '</tbody></table>';
         container.innerHTML = html;
-    } catch (e) { container.innerHTML = `<div style="color:var(--danger)">載入失敗：${escapeHtml(e.message)}</div>`; }
+    } catch (e) { container.innerHTML = `<div style="color:var(--danger)">${t('common.error_load')}: ${escapeHtml(e.message)}</div>`; }
 }
 
 async function _renderAuditTab(container) {
@@ -1203,7 +1203,7 @@ async function _renderAuditTab(container) {
             html += `<div style="text-align:center;padding:8px;font-size:12px;color:var(--text-secondary)">${t('admin.audit_showing', {n: 50, total: data.total})}</div>`;
         }
         container.innerHTML = html;
-    } catch (e) { container.innerHTML = `<div style="color:var(--danger)">載入失敗：${escapeHtml(e.message)}</div>`; }
+    } catch (e) { container.innerHTML = `<div style="color:var(--danger)">${t('common.error_load')}: ${escapeHtml(e.message)}</div>`; }
 }
 
 async function _renderSecurityTab(container) {
