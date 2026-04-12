@@ -48,7 +48,7 @@ If you need rock-solid multi-tenant collaboration, use Nextcloud. If you need ev
 ## Quick Start
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/nkcloud.git
+git clone https://github.com/nklab-io/nkcloud.git
 cd nkcloud
 docker compose up -d
 ```
