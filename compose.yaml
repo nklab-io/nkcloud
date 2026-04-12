@@ -7,7 +7,8 @@ services:
       - "8000:8000"    # Web UI
       - "8001:8001"    # WebDAV
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
       - ./storage:/data:rw       # Your files
       - ./data:/app/data:rw      # Database, thumbnails, config
