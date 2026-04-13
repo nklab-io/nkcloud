@@ -50,6 +50,10 @@ class DeletePayload(BaseModel):
     paths: list[str]
 
 
+class TrashPayload(BaseModel):
+    ids: list[str]
+
+
 class ShareCreatePayload(BaseModel):
     path: str
     password: Optional[str] = None

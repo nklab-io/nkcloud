@@ -23,6 +23,24 @@ THUMB_SIZE = (300, 300)
 PREVIEW_SIZE = (1920, 1920)
 
 HOMES_DIR = "_homes"
+TRASH_DIR = ".trash"
+TRASH_RETENTION_DAYS = 14
 DATA_DIR = os.environ.get("NKCLOUD_DATA_DIR", "/app/data")
 SESSION_SECRET_FILE = os.path.join(DATA_DIR, ".session_secret")
 DEFAULT_QUOTA_BYTES = 0  # 0 = unlimited
+
+# Text preview
+TEXT_PREVIEW_MAX_BYTES = 5 * 1024 * 1024  # 5 MB
+TEXT_PREVIEW_EXTS = {
+    ".txt", ".md", ".markdown", ".log", ".csv", ".tsv", ".json", ".xml", ".yaml", ".yml",
+    ".toml", ".ini", ".cfg", ".conf", ".env", ".properties",
+    ".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".html", ".htm", ".css", ".scss",
+    ".sass", ".less", ".vue", ".svelte",
+    ".sh", ".bash", ".zsh", ".fish", ".ps1", ".bat", ".cmd",
+    ".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx",
+    ".java", ".kt", ".swift", ".go", ".rs", ".rb", ".php", ".pl", ".lua",
+    ".sql", ".graphql", ".proto",
+    ".r", ".jl", ".scala", ".clj", ".hs", ".ml", ".ex", ".exs",
+    ".dockerfile", ".gitignore", ".gitattributes", ".editorconfig",
+    ".svg", ".diff", ".patch",
+}

@@ -6,8 +6,9 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import FileResponse, StreamingResponse
 
-from ..models import MkdirPayload, RenamePayload, MovePayload, DeletePayload
+from ..models import MkdirPayload, RenamePayload, MovePayload, DeletePayload, TrashPayload
 from ..services import filesystem as fs
+from ..services import trash_svc
 from ..services.zip_svc import stream_zip
 from ..permissions import check_permission, remap_path_for_user
 from ..database import record_audit, get_db
@@ -56,6 +57,9 @@ def list_files(request: Request, path: str = "/"):
     path = remap_path_for_user(path, user)
     rel = path  # store before resolve for permission check
     check_permission(user, "read", rel)
+
+    if fs.is_trash_path(path):
+        raise HTTPException(status_code=403, detail="Trash is not browsable via this endpoint")
 
     try:
         abs_path = fs.safe_resolve(path)
@@ -148,6 +152,8 @@ async def upload_files(
     user = _user(request)
     path = remap_path_for_user(path, user)
     check_permission(user, "upload", path)
+    if fs.is_trash_path(path):
+        raise HTTPException(status_code=403, detail="Cannot upload into trash")
 
     try:
         abs_dir = fs.safe_resolve(path)
@@ -221,6 +227,8 @@ def complete_chunked_upload(
     user = _user(request)
     path = remap_path_for_user(path, user)
     check_permission(user, "upload", path)
+    if fs.is_trash_path(path):
+        raise HTTPException(status_code=403, detail="Cannot upload into trash")
 
     try:
         abs_dir = fs.safe_resolve(path)
@@ -276,6 +284,8 @@ def make_directory(payload: MkdirPayload, request: Request):
     user = _user(request)
     path = remap_path_for_user(payload.path, user)
     check_permission(user, "mkdir", path)
+    if fs.is_trash_path(path):
+        raise HTTPException(status_code=403, detail="Cannot mkdir into trash")
 
     try:
         abs_path = fs.safe_resolve(path)
@@ -296,6 +306,8 @@ def rename_file(payload: RenamePayload, request: Request):
     user = _user(request)
     path = remap_path_for_user(payload.path, user)
     check_permission(user, "rename", path)
+    if fs.is_trash_path(path):
+        raise HTTPException(status_code=403, detail="Cannot rename items in trash")
 
     try:
         abs_path = fs.safe_resolve(path)
@@ -323,6 +335,8 @@ def move_files(payload: MovePayload, request: Request):
     user = _user(request)
     dest_path = remap_path_for_user(payload.destination, user)
     check_permission(user, "write", dest_path)
+    if fs.is_trash_path(dest_path):
+        raise HTTPException(status_code=403, detail="Cannot move into trash")
 
     try:
         dest_dir = fs.safe_resolve(dest_path)
@@ -365,31 +379,153 @@ def move_files(payload: MovePayload, request: Request):
 
 @router.delete("/files")
 def delete_files(payload: DeletePayload, request: Request):
+    """Soft-delete: move items to the user's trash."""
     user = _user(request)
-    deleted = []
+    trashed = []
+    file_root = os.path.realpath(config.FILE_ROOT)
+    user_home = os.path.join(file_root, config.HOMES_DIR, user["username"])
     for p in payload.paths:
         path = remap_path_for_user(p, user)
         check_permission(user, "delete", path)
+        if fs.is_trash_path(path):
+            continue  # cannot trash items already in trash via normal delete
         try:
             abs_path = fs.safe_resolve(path)
         except ValueError:
             continue
         if not os.path.exists(abs_path):
             continue
-        if os.path.isdir(abs_path):
-            shutil.rmtree(abs_path)
-        else:
-            os.remove(abs_path)
-        deleted.append(p)
+        # Refuse to trash the file root or a user's home root —
+        # would attempt to move a directory into itself.
+        if abs_path == file_root or abs_path == user_home:
+            continue
+        rel = fs.relative_path(abs_path)
+        try:
+            trash_svc.move_to_trash(abs_path, rel, user)
+            trashed.append(p)
+        except (OSError, shutil.Error):
+            continue
 
-    if deleted:
+    if trashed:
         record_audit(user["id"], user["username"], "delete",
-                     detail=json.dumps({"paths": deleted}),
+                     detail=json.dumps({"paths": trashed, "soft": True}),
                      ip=_client_ip(request))
+        # used_bytes unchanged (trash still inside home), but recompute to be safe
         if user["role"] != "owner":
             _update_used_bytes(user)
 
-    return {"deleted": deleted}
+    return {"deleted": trashed, "soft": True}
+
+
+# --- Trash ---
+
+@router.get("/files/trash")
+def list_trash(request: Request):
+    user = _user(request)
+    # Lazy purge expired entries on every list
+    trash_svc.purge_expired(user)
+
+    display_prefix = None
+    if user["role"] == "user":
+        display_prefix = f"/{config.HOMES_DIR}/{user['username']}"
+
+    entries = trash_svc.list_trash(user, display_prefix=display_prefix)
+    return {
+        "entries": entries,
+        "retention_days": config.TRASH_RETENTION_DAYS,
+    }
+
+
+@router.post("/files/trash/restore")
+def restore_from_trash(payload: TrashPayload, request: Request):
+    user = _user(request)
+    result = trash_svc.restore_ids(user, payload.ids)
+    if result["restored"]:
+        record_audit(user["id"], user["username"], "restore",
+                     detail=json.dumps({"ids": result["restored"]}),
+                     ip=_client_ip(request))
+        if user["role"] != "owner":
+            _update_used_bytes(user)
+    return result
+
+
+@router.delete("/files/trash")
+def purge_trash_items(payload: TrashPayload, request: Request):
+    user = _user(request)
+    removed = trash_svc.purge_ids(user, payload.ids)
+    if removed:
+        record_audit(user["id"], user["username"], "purge",
+                     detail=json.dumps({"ids": removed}),
+                     ip=_client_ip(request))
+        if user["role"] != "owner":
+            _update_used_bytes(user)
+    return {"purged": removed}
+
+
+@router.post("/files/trash/empty")
+def empty_trash(request: Request):
+    user = _user(request)
+    count = trash_svc.empty_trash(user)
+    if count:
+        record_audit(user["id"], user["username"], "purge_all",
+                     detail=json.dumps({"count": count}),
+                     ip=_client_ip(request))
+        if user["role"] != "owner":
+            _update_used_bytes(user)
+    return {"purged_count": count}
+
+
+# --- Text preview ---
+
+@router.get("/files/text")
+def preview_text(request: Request, path: str):
+    """Return plain-text content for small text files. UTF-8 decoded with fallback."""
+    user = _user(request)
+    path = remap_path_for_user(path, user)
+    check_permission(user, "read", path)
+
+    try:
+        abs_path = fs.safe_resolve(path)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not os.path.isfile(abs_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    ext = os.path.splitext(abs_path)[1].lower()
+    size = os.path.getsize(abs_path)
+    is_whitelisted = ext in config.TEXT_PREVIEW_EXTS
+
+    if size > config.TEXT_PREVIEW_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="File too large for preview")
+
+    with open(abs_path, "rb") as f:
+        raw = f.read()
+
+    # Try strict UTF-8 first; if fails and not whitelisted, refuse (likely binary)
+    try:
+        text = raw.decode("utf-8")
+        encoding = "utf-8"
+    except UnicodeDecodeError:
+        if not is_whitelisted:
+            raise HTTPException(status_code=415, detail="Not a text file")
+        # Whitelisted non-UTF8: try common fallbacks
+        for enc in ("utf-8-sig", "gbk", "big5", "latin-1"):
+            try:
+                text = raw.decode(enc)
+                encoding = enc
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            raise HTTPException(status_code=415, detail="Could not decode file")
+
+    return {
+        "name": os.path.basename(abs_path),
+        "ext": ext.lstrip("."),
+        "size": size,
+        "encoding": encoding,
+        "content": text,
+    }
 
 
 @router.get("/stats")

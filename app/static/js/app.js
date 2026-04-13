@@ -11,6 +11,7 @@ const state = {
     sortAsc: true,
     stats: null,
     user: null, // { id, username, role, quota_bytes, used_bytes }
+    cursorIdx: -1, // keyboard cursor index (in sorted items)
 };
 
 // icons
@@ -129,6 +130,7 @@ function renderFiles() {
             <div class="empty-icon">&#128193;</div>
             <div class="empty-text">${t('files.empty')}</div>
         </div>`;
+        updateToolbar();
         return;
     }
 
@@ -141,48 +143,60 @@ function renderFiles() {
 }
 
 function renderListView(container, items) {
-    let html = '<ul class="file-list">';
-    for (const item of items) {
+    const animate = state._animateNext;
+    const staggerCls = animate ? ' stagger-in' : '';
+    let html = `<ul class="file-list${staggerCls}">`;
+    items.forEach((item, i) => {
         const selected = state.selected.has(item.path) ? ' selected' : '';
+        const cursor = state.cursorIdx === i ? ' cursor' : '';
         const thumbHtml = !item.is_dir && item.has_thumb
             ? `<img src="${API.thumbUrl(item.path)}" loading="lazy" alt="">`
             : getFileIcon(item);
-        html += `<li class="file-item${selected}" data-path="${escapeHtml(item.path)}" data-dir="${item.is_dir}">
+        const delay = animate ? ` style="animation-delay:${Math.min(i, 19) * 30}ms"` : '';
+        html += `<li class="file-item${selected}${cursor}" data-path="${escapeHtml(item.path)}" data-idx="${i}" data-dir="${item.is_dir}"${delay}>
             <div class="checkbox">${state.selected.has(item.path) ? ICONS.check : ''}</div>
             <div class="icon">${thumbHtml}</div>
             <div class="name">${escapeHtml(item.name)}</div>
             <div class="meta size">${item.is_dir ? '' : formatSize(item.size)}</div>
             <div class="meta date">${formatDate(item.modified)}</div>
         </li>`;
-    }
+    });
     html += '</ul>';
     container.innerHTML = html;
     bindFileEvents(container);
+    state._animateNext = false;
 }
 
 function renderGridView(container, items) {
-    let html = '<div class="file-grid">';
-    for (const item of items) {
+    const animate = state._animateNext;
+    const staggerCls = animate ? ' stagger-in' : '';
+    let html = `<div class="file-grid${staggerCls}">`;
+    items.forEach((item, i) => {
         const selected = state.selected.has(item.path) ? ' selected' : '';
+        const cursor = state.cursorIdx === i ? ' cursor' : '';
         const thumbContent = !item.is_dir && item.has_thumb
             ? `<img src="${API.thumbUrl(item.path)}" loading="lazy" alt="">`
             : `<div style="font-size:40px">${item.is_dir ? '&#128193;' : getFileIcon(item)}</div>`;
-        html += `<div class="grid-item${selected}" data-path="${escapeHtml(item.path)}" data-dir="${item.is_dir}">
+        const delay = animate ? ` style="animation-delay:${Math.min(i, 19) * 30}ms"` : '';
+        html += `<div class="grid-item${selected}${cursor}" data-path="${escapeHtml(item.path)}" data-idx="${i}" data-dir="${item.is_dir}"${delay}>
             <div class="grid-check">${state.selected.has(item.path) ? ICONS.check : ''}</div>
             <div class="thumb">${thumbContent}</div>
             <div class="grid-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>
             <div class="grid-meta">${item.is_dir ? '' : formatSize(item.size)}</div>
         </div>`;
-    }
+    });
     html += '</div>';
     container.innerHTML = html;
     bindFileEvents(container);
+    state._animateNext = false;
 }
 
 function bindFileEvents(container) {
     const items = container.querySelectorAll('.file-item, .grid-item');
     items.forEach(el => {
         el.addEventListener('click', (e) => {
+            // Swallow ghost clicks that bleed through right after closing the viewer
+            if (window._suppressFileClick) { e.stopPropagation(); return; }
             const path = el.dataset.path;
             const isDir = el.dataset.dir === 'true';
             const isCheckbox = e.target.closest('.checkbox, .grid-check');
@@ -199,12 +213,17 @@ function bindFileEvents(container) {
             }
 
             state.selected.clear();
+            // Update cursor to clicked index
+            const idx = parseInt(el.dataset.idx, 10);
+            if (!isNaN(idx)) state.cursorIdx = idx;
             if (isDir) {
                 navigateTo(path);
             } else {
                 const item = state.items.find(i => i.path === path);
                 if (item && isMedia(item)) {
                     openViewer(item);
+                } else if (item && item.is_text) {
+                    openTextViewer(item);
                 } else {
                     window.open(API.downloadUrl(path), '_blank');
                 }
@@ -260,11 +279,55 @@ async function navigateTo(path) {
         state.currentPath = data.path;
         state.items = data.items;
         state.selected.clear();
+        state.cursorIdx = -1;
+        state._animateNext = true;
         window.location.hash = '#' + data.path;
         renderBreadcrumbs();
         renderFiles();
     } catch (err) {
         toast(t('files.error_load'), 'error');
+    }
+}
+
+function scrollCursorIntoView() {
+    const el = document.querySelector('.file-item.cursor, .grid-item.cursor');
+    if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function moveCursor(delta) {
+    const sorted = sortItems(state.items);
+    if (sorted.length === 0) return;
+    let idx = state.cursorIdx < 0 ? 0 : state.cursorIdx + delta;
+    idx = Math.max(0, Math.min(sorted.length - 1, idx));
+    state.cursorIdx = idx;
+    renderFiles();
+    scrollCursorIntoView();
+}
+
+function getGridColumns() {
+    const items = document.querySelectorAll('.file-grid .grid-item');
+    if (items.length < 2) return 1;
+    const firstTop = items[0].offsetTop;
+    let cols = 1;
+    for (let i = 1; i < items.length; i++) {
+        if (items[i].offsetTop !== firstTop) break;
+        cols++;
+    }
+    return cols;
+}
+
+function activateCursor() {
+    const sorted = sortItems(state.items);
+    if (state.cursorIdx < 0 || state.cursorIdx >= sorted.length) return;
+    const item = sorted[state.cursorIdx];
+    if (item.is_dir) {
+        navigateTo(item.path);
+    } else if (isMedia(item)) {
+        openViewer(item);
+    } else if (item.is_text) {
+        openTextViewer(item);
+    } else {
+        window.open(API.downloadUrl(item.path), '_blank');
     }
 }
 
@@ -374,11 +437,13 @@ function showViewerContent() {
     const content = document.getElementById('viewerContent');
     const type = getMediaType(item);
     document.getElementById('viewerFilename').textContent = item.name;
+    document.getElementById('viewerOverlay').classList.remove('text-mode');
 
     const ext = item.name.split('.').pop().toLowerCase();
     if (type === 'image') {
         const src = NEEDS_RENDER_EXTS.includes(ext) ? API.previewUrl(item.path) : API.streamUrl(item.path);
-        content.innerHTML = `<img src="${src}" alt="${escapeHtml(item.name)}">`;
+        content.innerHTML = `<div class="zoom-stage" id="zoomStage" onclick="if(event.target===this&&(!window._zoomScaleGt1||!window._zoomScaleGt1()))window._closeViewer()"><img id="zoomImg" src="${src}" alt="${escapeHtml(item.name)}" draggable="false"></div>`;
+        initZoom();
     } else if (type === 'video') {
         if (VIDEO_EXTS_PLAYABLE.includes(ext)) {
             content.innerHTML = `<video src="${API.streamUrl(item.path)}" controls autoplay></video>`;
@@ -409,12 +474,204 @@ function viewerNext() {
     if (viewerIndex < viewerMediaItems.length - 1) { viewerIndex++; showViewerContent(); }
 }
 function closeViewer() {
-    document.getElementById('viewerOverlay').classList.remove('visible');
+    const overlay = document.getElementById('viewerOverlay');
+    const content = document.getElementById('viewerContent');
     document.removeEventListener('keydown', viewerKeyHandler);
-    const v = document.querySelector('#viewerContent video');
+    const v = content.querySelector('video');
     if (v) v.pause();
-    const a = document.querySelector('#viewerContent audio');
+    const a = content.querySelector('audio');
     if (a) a.pause();
+    teardownZoom();
+    _textViewerToken++; // cancel any in-flight text fetch from rendering
+
+    // CRITICAL: clear heavy DOM (e.g. 47k-line <pre>) BEFORE the opacity transition
+    // begins. Otherwise compositing the dimming layer over 2MB of text freezes
+    // the main thread for several seconds.
+    content.innerHTML = '';
+
+    overlay.classList.remove('visible');
+
+    // Block file-item clicks for 350ms — protects against the second of a
+    // rapid double-click landing on the file underneath.
+    window._suppressFileClick = true;
+    setTimeout(() => { window._suppressFileClick = false; }, 350);
+
+    setTimeout(() => overlay.classList.remove('text-mode'), 220);
+}
+
+// --- Image zoom / pan ---
+let zoomState = null; // { scale, x, y, dragging, startX, startY, origX, origY }
+
+function initZoom() {
+    const stage = document.getElementById('zoomStage');
+    const img = document.getElementById('zoomImg');
+    if (!stage || !img) return;
+    zoomState = { scale: 1, x: 0, y: 0, dragging: false, startX: 0, startY: 0, origX: 0, origY: 0 };
+    applyZoom();
+
+    stage.addEventListener('wheel', onZoomWheel, { passive: false });
+    stage.addEventListener('mousedown', onZoomDown);
+    stage.addEventListener('dblclick', onZoomDblClick);
+    window.addEventListener('mousemove', onZoomMove);
+    window.addEventListener('mouseup', onZoomUp);
+}
+
+window._zoomScaleGt1 = () => zoomState && zoomState.scale > 1.001;
+
+function teardownZoom() {
+    const stage = document.getElementById('zoomStage');
+    if (stage) {
+        stage.removeEventListener('wheel', onZoomWheel);
+        stage.removeEventListener('mousedown', onZoomDown);
+        stage.removeEventListener('dblclick', onZoomDblClick);
+    }
+    window.removeEventListener('mousemove', onZoomMove);
+    window.removeEventListener('mouseup', onZoomUp);
+    zoomState = null;
+}
+
+function applyZoom() {
+    const img = document.getElementById('zoomImg');
+    const stage = document.getElementById('zoomStage');
+    if (!img || !zoomState) return;
+    img.style.transform = `translate(${zoomState.x}px, ${zoomState.y}px) scale(${zoomState.scale})`;
+    if (stage) stage.classList.toggle('zoomed', zoomState.scale > 1.001);
+}
+
+function onZoomWheel(e) {
+    if (!zoomState) return;
+    e.preventDefault();
+    const stage = e.currentTarget;
+    const rect = stage.getBoundingClientRect();
+    const cx = e.clientX - rect.left - rect.width / 2;
+    const cy = e.clientY - rect.top - rect.height / 2;
+    const delta = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    const newScale = Math.max(1, Math.min(8, zoomState.scale * delta));
+    const ratio = newScale / zoomState.scale;
+    // Zoom toward pointer
+    zoomState.x = cx - (cx - zoomState.x) * ratio;
+    zoomState.y = cy - (cy - zoomState.y) * ratio;
+    zoomState.scale = newScale;
+    if (newScale === 1) { zoomState.x = 0; zoomState.y = 0; }
+    applyZoom();
+}
+
+function onZoomDown(e) {
+    if (!zoomState || zoomState.scale <= 1.001) return;
+    zoomState.dragging = true;
+    zoomState.startX = e.clientX;
+    zoomState.startY = e.clientY;
+    zoomState.origX = zoomState.x;
+    zoomState.origY = zoomState.y;
+    e.preventDefault();
+}
+
+function onZoomMove(e) {
+    if (!zoomState || !zoomState.dragging) return;
+    zoomState.x = zoomState.origX + (e.clientX - zoomState.startX);
+    zoomState.y = zoomState.origY + (e.clientY - zoomState.startY);
+    applyZoom();
+}
+
+function onZoomUp() {
+    if (zoomState) zoomState.dragging = false;
+}
+
+function onZoomDblClick(e) {
+    if (!zoomState) return;
+    if (zoomState.scale > 1.001) {
+        zoomState.scale = 1; zoomState.x = 0; zoomState.y = 0;
+    } else {
+        const stage = e.currentTarget;
+        const rect = stage.getBoundingClientRect();
+        const cx = e.clientX - rect.left - rect.width / 2;
+        const cy = e.clientY - rect.top - rect.height / 2;
+        const targetScale = 2.5;
+        zoomState.x = -cx * (targetScale - 1);
+        zoomState.y = -cy * (targetScale - 1);
+        zoomState.scale = targetScale;
+    }
+    applyZoom();
+}
+
+// --- Text viewer ---
+// LRU-ish cache so re-opening the same file is instant (skip both fetch + render).
+const _textCache = new Map();
+const TEXT_CACHE_MAX = 5;
+function _cacheText(path, data) {
+    if (_textCache.has(path)) _textCache.delete(path);
+    _textCache.set(path, data);
+    while (_textCache.size > TEXT_CACHE_MAX) {
+        _textCache.delete(_textCache.keys().next().value);
+    }
+}
+
+// Bumped on every open + on close — protects late fetches from rendering
+// into a viewer the user has already dismissed.
+let _textViewerToken = 0;
+
+function openTextViewer(item) {
+    const overlay = document.getElementById('viewerOverlay');
+    const content = document.getElementById('viewerContent');
+    const myToken = ++_textViewerToken;
+
+    overlay.classList.add('text-mode');
+    document.getElementById('viewerFilename').textContent = item.name;
+    content.innerHTML = `<div class="text-viewer"><div class="text-loading">${t('common.loading')}</div></div>`;
+    overlay.classList.add('visible');
+    document.addEventListener('keydown', viewerKeyHandler);
+
+    if (_textCache.has(item.path)) {
+        renderTextViewer(content, item, _textCache.get(item.path), myToken);
+        return;
+    }
+
+    API.getText(item.path).then(data => {
+        _cacheText(item.path, data);
+        renderTextViewer(content, item, data, myToken);
+    }).catch(e => {
+        if (myToken !== _textViewerToken) return;
+        content.innerHTML = `<div class="viewer-unsupported"><div style="font-size:14px;color:var(--danger)">${escapeHtml(e.message || 'Failed')}</div></div>`;
+    });
+}
+
+function renderTextViewer(container, item, data, token) {
+    // User closed the viewer (or opened another) before fetch resolved — bail out.
+    if (token !== _textViewerToken) return;
+
+    const lineCount = (data.content.match(/\n/g) || []).length + 1;
+    const lineNumsText = Array.from({ length: lineCount }, (_, i) => i + 1).join('\n');
+
+    container.innerHTML = '';
+    const wrap = document.createElement('div');
+    wrap.className = 'text-viewer';
+
+    const header = document.createElement('div');
+    header.className = 'text-viewer-header';
+    const extSpan = document.createElement('span');
+    extSpan.className = 'text-ext';
+    extSpan.textContent = data.ext || 'txt';
+    const sizeSpan = document.createElement('span');
+    sizeSpan.className = 'text-size';
+    sizeSpan.textContent = `${formatSize(data.size)} · ${data.encoding} · ${lineCount} ${t('viewer.lines')}`;
+    const dlBtn = document.createElement('a');
+    dlBtn.className = 'btn btn-ghost btn-sm';
+    dlBtn.href = API.downloadUrl(item.path);
+    dlBtn.download = '';
+    dlBtn.textContent = t('context.download');
+    header.append(extSpan, sizeSpan, dlBtn);
+
+    const body = document.createElement('div');
+    body.className = 'text-viewer-body';
+    const lineno = document.createElement('pre');
+    lineno.className = 'text-lineno';
+    lineno.textContent = lineNumsText;
+    const code = document.createElement('pre');
+    code.className = 'text-content';
+    code.textContent = data.content;
+    body.append(lineno, code);
+    wrap.append(header, body);
+    container.appendChild(wrap);
 }
 
 // --- Modals ---
@@ -529,20 +786,21 @@ window._viewerNext = viewerNext;
 window._openHelp = () => {
     const sections = [
         ['browse', '📂'], ['select', '✅'], ['upload', '⬆️'], ['download', '⬇️'],
-        ['media', '🎬'], ['share', '🔗'], ['context', '📝'], ['webdav', '🖥'],
+        ['media', '🎬'], ['text', '📄'], ['trash', '🗑'], ['share', '🔗'],
+        ['context', '📝'], ['webdav', '🖥'],
     ].map(([key, icon]) => `
         <div style="margin-bottom:20px">
             <div style="font-weight:600;color:var(--accent);margin-bottom:6px">${icon} ${t('help.'+key+'_title')}</div>
             <div style="color:var(--text-secondary)">${t('help.'+key+'_desc')}</div>
         </div>`).join('');
 
-    const kbdStyle = 'background:var(--bg-tertiary);padding:2px 8px;border-radius:4px;border:1px solid var(--border)';
-    const shortcuts = [
-        ['Ctrl/⌘ + A', t('help.shortcut_select_all')],
-        ['Delete', t('help.shortcut_delete')],
-        ['Esc', t('help.shortcut_escape')],
-        ['← →', t('help.shortcut_arrows')],
-    ].map(([key, desc]) => `<tr><td style="padding:4px 0"><kbd style="${kbdStyle}">${key}</kbd></td><td>${desc}</td></tr>`).join('');
+    const shortcutKeys = [
+        'shortcut_arrows', 'shortcut_enter', 'shortcut_backspace',
+        'shortcut_space', 'shortcut_home_end',
+        'shortcut_select_all', 'shortcut_delete', 'shortcut_escape',
+    ];
+    const shortcuts = shortcutKeys
+        .map(k => `<li style="padding:4px 0">${t('help.' + k)}</li>`).join('');
 
     // Role-specific permissions section
     const role = state.user?.role || 'user';
@@ -559,14 +817,99 @@ window._openHelp = () => {
         ${sections}
         <div style="margin-bottom:8px">
             <div style="font-weight:600;color:var(--accent);margin-bottom:6px">⌨️ ${t('help.shortcuts_title')}</div>
-            <div style="color:var(--text-secondary)">
-                <table style="width:100%;font-size:13px;border-collapse:collapse">${shortcuts}</table>
-            </div>
+            <ul style="color:var(--text-secondary);font-size:13px;list-style:none;padding-left:0">${shortcuts}</ul>
         </div>
         </div>
         <div class="modal-actions" style="margin-top:16px">
             <button class="btn btn-primary" onclick="window._closeModal()">${t('common.ok')}</button>
         </div>`);
+};
+
+// --- Trash ---
+window._openTrash = async () => {
+    showModal(`
+        <h3 style="margin-bottom:12px">${t('trash.title')}</h3>
+        <div style="font-size:12px;color:var(--text-secondary);margin-bottom:12px">${t('trash.retention_hint')}</div>
+        <div id="trashContent" style="color:var(--text-secondary);padding:20px;text-align:center">${t('common.loading')}</div>
+        <div class="modal-actions" style="margin-top:16px">
+            <button class="btn btn-danger" id="trashEmptyBtn" onclick="window._emptyTrash()" style="display:none">${t('trash.empty_all')}</button>
+            <button class="btn btn-ghost" onclick="window._closeModal()">${t('common.close')}</button>
+        </div>`, 'modal-trash');
+    await _loadTrash();
+};
+
+async function _loadTrash() {
+    const container = document.getElementById('trashContent');
+    try {
+        const data = await API.listTrash();
+        const emptyBtn = document.getElementById('trashEmptyBtn');
+        if (!data.entries || data.entries.length === 0) {
+            container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-secondary)">${t('trash.empty_state')}</div>`;
+            if (emptyBtn) emptyBtn.style.display = 'none';
+            return;
+        }
+        if (emptyBtn) emptyBtn.style.display = '';
+        let html = `<div class="trash-list">`;
+        for (const e of data.entries) {
+            const icon = e.is_dir ? ICONS.folder : ICONS.file;
+            const deleted = formatDate(e.deleted_at);
+            const daysCls = e.days_left <= 3 ? ' soon' : '';
+            html += `<div class="trash-row" data-id="${escapeHtml(e.id)}">
+                <div class="trash-icon">${icon}</div>
+                <div class="trash-meta">
+                    <div class="trash-name">${escapeHtml(e.orig_name)}</div>
+                    <div class="trash-sub">
+                        <span class="trash-path">${escapeHtml(e.orig_path)}</span>
+                        <span class="trash-size">${e.is_dir ? '' : formatSize(e.size)}</span>
+                        <span class="trash-deleted">${deleted}</span>
+                        <span class="trash-days${daysCls}">${t('trash.days_left', {n: e.days_left})}</span>
+                    </div>
+                </div>
+                <div class="trash-actions">
+                    <button class="btn btn-ghost btn-sm" onclick="window._restoreOne('${escapeHtml(e.id)}')">${t('trash.restore')}</button>
+                    <button class="btn btn-danger btn-sm" onclick="window._purgeOne('${escapeHtml(e.id)}')">${t('trash.delete_forever')}</button>
+                </div>
+            </div>`;
+        }
+        html += `</div>`;
+        container.innerHTML = html;
+    } catch (err) {
+        container.innerHTML = `<div style="color:var(--danger)">${escapeHtml(err.message)}</div>`;
+    }
+}
+
+window._restoreOne = async (id) => {
+    try {
+        const res = await API.restoreTrash([id]);
+        if (res.restored.length > 0) {
+            toast(t('trash.restored'), 'success');
+            await _loadTrash();
+            // Refresh current folder view
+            navigateTo(state.currentPath);
+        } else {
+            toast(t('trash.restore_failed'), 'error');
+        }
+    } catch (e) { toast(e.message, 'error'); }
+};
+
+window._purgeOne = async (id) => {
+    if (!confirm(t('trash.confirm_purge'))) return;
+    try {
+        await API.purgeTrash([id]);
+        toast(t('trash.purged'), 'success');
+        await _loadTrash();
+        loadStats();
+    } catch (e) { toast(e.message, 'error'); }
+};
+
+window._emptyTrash = async () => {
+    if (!confirm(t('trash.confirm_empty'))) return;
+    try {
+        const res = await API.emptyTrash();
+        toast(t('trash.emptied', {n: res.purged_count}), 'success');
+        await _loadTrash();
+        loadStats();
+    } catch (e) { toast(e.message, 'error'); }
 };
 
 // --- Shares Management Page ---
@@ -757,11 +1100,16 @@ function initUpload() {
         if (dragCounter <= 0) { overlay.classList.remove('visible'); dragCounter = 0; }
     });
     body.addEventListener('dragover', (e) => e.preventDefault());
-    body.addEventListener('drop', (e) => {
+    body.addEventListener('drop', async (e) => {
         e.preventDefault();
         dragCounter = 0;
         overlay.classList.remove('visible');
-        if (e.dataTransfer.files.length > 0) {
+        const items = e.dataTransfer.items;
+        // Use webkitGetAsEntry to detect folders; fall back to plain files
+        if (items && items.length && typeof items[0].webkitGetAsEntry === 'function') {
+            const expanded = await expandDropEntries(items);
+            if (expanded.length > 0) uploadFiles(expanded);
+        } else if (e.dataTransfer.files.length > 0) {
             uploadFiles(e.dataTransfer.files);
         }
     });
@@ -777,16 +1125,79 @@ function initUpload() {
     });
 }
 
+// Expand DataTransferItems (dropped folders) into a flat file list with relativePath.
+async function expandDropEntries(items) {
+    const out = [];
+    const entries = [];
+    for (let i = 0; i < items.length; i++) {
+        const entry = items[i].webkitGetAsEntry && items[i].webkitGetAsEntry();
+        if (entry) entries.push(entry);
+    }
+    await Promise.all(entries.map(e => walkEntry(e, '', out)));
+    return out;
+}
+
+function walkEntry(entry, prefix, out) {
+    return new Promise((resolve) => {
+        if (entry.isFile) {
+            entry.file(f => {
+                // File is immutable; wrap to attach relativePath
+                out.push(Object.assign(f, { _relPath: prefix + entry.name }));
+                resolve();
+            }, () => resolve());
+        } else if (entry.isDirectory) {
+            const reader = entry.createReader();
+            const all = [];
+            const readBatch = () => {
+                reader.readEntries(chunk => {
+                    if (chunk.length === 0) {
+                        Promise.all(all.map(c => walkEntry(c, prefix + entry.name + '/', out))).then(resolve);
+                    } else {
+                        all.push(...chunk);
+                        readBatch();
+                    }
+                }, () => resolve());
+            };
+            readBatch();
+        } else {
+            resolve();
+        }
+    });
+}
+
+// Compute target directory for a file, mkdir-ing ancestor dirs as needed.
+const _ensuredDirs = new Set();
+async function ensureDirPath(dirPath) {
+    if (!dirPath || dirPath === '/' || _ensuredDirs.has(dirPath)) return;
+    // Ensure parents first
+    const parent = dirPath.replace(/\/[^/]+$/, '') || '/';
+    await ensureDirPath(parent);
+    try {
+        await API.mkdir(dirPath);
+    } catch (e) {
+        // 409 Already exists is fine
+        if (!/already exists|409/i.test(e.message || '')) throw e;
+    }
+    _ensuredDirs.add(dirPath);
+}
+
 async function uploadFiles(fileList) {
     const panel = document.getElementById('uploadPanel');
     const list = document.getElementById('uploadList');
     panel.classList.add('visible');
+    _ensuredDirs.clear();
 
     for (const file of fileList) {
+        const relPath = file._relPath || file.name;
+        const relDir = relPath.includes('/') ? relPath.replace(/\/[^/]+$/, '') : '';
+        const targetDir = relDir
+            ? (state.currentPath.replace(/\/$/, '') + '/' + relDir)
+            : state.currentPath;
+
         const itemEl = document.createElement('div');
         itemEl.className = 'upload-item';
         itemEl.innerHTML = `
-            <div class="upload-name">${escapeHtml(file.name)}</div>
+            <div class="upload-name">${escapeHtml(relPath)}</div>
             <div class="upload-bar"><div class="upload-fill" style="width:0%"></div></div>
             <div class="upload-status">${t('files.upload_waiting')}</div>`;
         list.appendChild(itemEl);
@@ -794,10 +1205,11 @@ async function uploadFiles(fileList) {
         const status = itemEl.querySelector('.upload-status');
 
         try {
+            if (relDir) await ensureDirPath(targetDir);
             if (file.size > CHUNK_THRESHOLD) {
-                await uploadChunked(file, fill, status);
+                await uploadChunked(file, fill, status, targetDir);
             } else {
-                await uploadSimple(file, fill, status);
+                await uploadSimple(file, fill, status, targetDir);
             }
             itemEl.classList.add('done');
             status.textContent = t('files.upload_done');
@@ -814,10 +1226,10 @@ async function uploadFiles(fileList) {
     }, 2000);
 }
 
-async function uploadSimple(file, fillEl, statusEl) {
+async function uploadSimple(file, fillEl, statusEl, targetDir) {
     return new Promise((resolve, reject) => {
         const fd = new FormData();
-        fd.append('path', state.currentPath);
+        fd.append('path', targetDir || state.currentPath);
         fd.append('files', file);
 
         const xhr = new XMLHttpRequest();
@@ -839,7 +1251,7 @@ async function uploadSimple(file, fillEl, statusEl) {
     });
 }
 
-async function uploadChunked(file, fillEl, statusEl) {
+async function uploadChunked(file, fillEl, statusEl, targetDir) {
     const settings = getUploadSettings();
     const chunkSize = settings.chunkMb * 1024 * 1024;
     const concurrency = settings.concurrency;
@@ -891,7 +1303,7 @@ async function uploadChunked(file, fillEl, statusEl) {
     fd.append('upload_id', uploadId);
     fd.append('total_chunks', totalChunks);
     fd.append('filename', file.name);
-    fd.append('path', state.currentPath);
+    fd.append('path', targetDir || state.currentPath);
     const res = await fetch('/api/files/upload/complete', {
         method: 'POST',
         body: fd,
@@ -1420,16 +1832,69 @@ document.addEventListener('click', (e) => {
 
 document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+    // Modal/viewer open: only handle Escape; bail out of nav handlers
+    const modalOpen = document.getElementById('modalOverlay').classList.contains('visible');
+    const viewerOpen = document.getElementById('viewerOverlay').classList.contains('visible');
+    if (modalOpen || viewerOpen) return;
+
     if (e.key === 'Delete' && state.selected.size > 0) {
         confirmDelete([...state.selected]);
+        return;
     }
     if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         window._selectAll();
+        return;
     }
     if (e.key === 'Escape') {
         state.selected.clear();
+        state.cursorIdx = -1;
         renderFiles();
+        return;
+    }
+
+    // Keyboard navigation
+    const sorted = sortItems(state.items);
+    if (sorted.length === 0) return;
+    const isGrid = state.viewMode === 'grid';
+    const cols = isGrid ? getGridColumns() : 1;
+
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        moveCursor(isGrid ? cols : 1);
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        moveCursor(isGrid ? -cols : -1);
+    } else if (e.key === 'ArrowRight' && isGrid) {
+        e.preventDefault();
+        moveCursor(1);
+    } else if (e.key === 'ArrowLeft' && isGrid) {
+        e.preventDefault();
+        moveCursor(-1);
+    } else if (e.key === 'Home') {
+        e.preventDefault();
+        state.cursorIdx = 0;
+        renderFiles();
+        scrollCursorIntoView();
+    } else if (e.key === 'End') {
+        e.preventDefault();
+        state.cursorIdx = sorted.length - 1;
+        renderFiles();
+        scrollCursorIntoView();
+    } else if (e.key === 'Enter') {
+        e.preventDefault();
+        activateCursor();
+    } else if (e.key === 'Backspace') {
+        e.preventDefault();
+        const parent = state.currentPath === '/' ? null
+            : (state.currentPath.replace(/\/[^/]+$/, '') || '/');
+        if (parent !== null) navigateTo(parent);
+    } else if (e.key === ' ' && state.cursorIdx >= 0) {
+        // Space toggles selection on cursored item
+        e.preventDefault();
+        const item = sorted[state.cursorIdx];
+        if (item) toggleSelect(item.path);
     }
 });
 

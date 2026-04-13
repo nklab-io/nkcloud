@@ -40,6 +40,13 @@ def relative_path(absolute_path: str) -> str:
     return "/" + os.path.relpath(absolute_path, root)
 
 
+def is_trash_path(relative_path: str) -> bool:
+    """Check if a relative path lies inside any .trash/ directory."""
+    from .. import config
+    parts = relative_path.strip("/").split("/")
+    return config.TRASH_DIR in parts
+
+
 def get_mime_type(name: str) -> str:
     ext = os.path.splitext(name)[1].lower()
     mime_map = {
@@ -66,6 +73,12 @@ def has_thumbnail(name: str) -> bool:
     return ext in THUMBABLE_IMAGE or ext in THUMBABLE_VIDEO
 
 
+def is_text_file(name: str) -> bool:
+    from .. import config
+    ext = os.path.splitext(name)[1].lower()
+    return ext in config.TEXT_PREVIEW_EXTS
+
+
 def list_directory(dir_path: str) -> list[dict]:
     """List contents of a directory, returning file metadata."""
     entries = []
@@ -88,6 +101,7 @@ def list_directory(dir_path: str) -> list[dict]:
                     "modified": mtime,
                     "mime_type": "" if is_dir else get_mime_type(entry.name),
                     "has_thumb": False if is_dir else has_thumbnail(entry.name),
+                    "is_text": False if is_dir else is_text_file(entry.name),
                 })
     except PermissionError:
         pass

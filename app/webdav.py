@@ -68,6 +68,14 @@ class UserScopingMiddleware:
         path = environ.get("PATH_INFO", "/")
         role = user["role"]
 
+        # Block access to .trash/ for everyone via WebDAV — the web UI owns
+        # trash semantics (soft-delete, restore, retention). Letting WebDAV
+        # poke .trash would expose UUID-named files and bypass the recovery
+        # window if a client deletes from there.
+        if config.TRASH_DIR in path.strip("/").split("/"):
+            start_response("403 Forbidden", [("Content-Type", "text/plain")])
+            return [b"Trash is managed via the web UI"]
+
         if role == "owner":
             # Owner sees everything
             return self.app(environ, start_response)

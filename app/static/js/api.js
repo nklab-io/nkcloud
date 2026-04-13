@@ -66,6 +66,48 @@ const API = {
         return res.json();
     },
 
+    // --- Trash ---
+
+    async listTrash() {
+        const res = await this._fetch('/api/files/trash');
+        if (!res.ok) throw new Error((await res.json()).detail);
+        return res.json();
+    },
+
+    async restoreTrash(ids) {
+        const res = await this._fetch('/api/files/trash/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids }),
+        });
+        if (!res.ok) throw new Error((await res.json()).detail);
+        return res.json();
+    },
+
+    async purgeTrash(ids) {
+        const res = await this._fetch('/api/files/trash', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids }),
+        });
+        if (!res.ok) throw new Error((await res.json()).detail);
+        return res.json();
+    },
+
+    async emptyTrash() {
+        const res = await this._fetch('/api/files/trash/empty', { method: 'POST' });
+        if (!res.ok) throw new Error((await res.json()).detail);
+        return res.json();
+    },
+
+    // --- Text preview ---
+
+    async getText(path) {
+        const res = await this._fetch(`/api/files/text?path=${encodeURIComponent(path)}`);
+        if (!res.ok) throw new Error((await res.json()).detail);
+        return res.json();
+    },
+
     async search(q, path = '/') {
         const res = await this._fetch(`/api/search?q=${encodeURIComponent(q)}&path=${encodeURIComponent(path)}`);
         return res.json();

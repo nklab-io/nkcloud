@@ -19,15 +19,25 @@ I'm using it every day to host my own files. Maybe you'll like it too.
 
 ## Status
 
-**v0.1.0 — this is a personal project I'm sharing, not a polished product.**
+**v0.2.0 — adding the bits I missed in v0.1, still a personal project.**
 
-- ✅ Runs every day on my homelab (Linux host, served to macOS + iPhone Safari + iPadOS)
+- ✅ Daily-driven on my homelab (Linux host, used from macOS / iPhone Safari / iPadOS)
 - ✅ Tested: Chrome, Safari, Firefox on desktop + mobile
 - ⚠️ Windows client: untested (WebDAV mount should work but I haven't verified)
 - ⚠️ No automated test suite yet — relying on "I use it myself" for now
 - ⚠️ Expect rough edges. Open an issue or PR and I'll take a look
 
 If you need rock-solid multi-tenant collaboration, use Nextcloud. If you need every protocol under the sun, use Copyparty. If you want something small and nice-looking to self-host your own files, give this a try.
+
+## What's new in v0.2.0
+
+- 🗑 **Trash with 14-day retention** — soft delete, restore, quota-aware purge
+- 📄 **Text & code preview** — in-browser viewer for logs, configs, source files (40+ extensions)
+- 🖼 **Image zoom & pan** — wheel zoom toward pointer, drag to pan, double-click to toggle 100% / fit
+- ⌨️ **Keyboard navigation** — Finder-like arrow keys, Enter to open, Backspace to go up, Space to select
+- 📁 **Folder drag-and-drop upload** — preserves directory structure, auto-creates folders
+- ✨ iOS-style spring animations across the UI
+- 🐛 Lots of small fixes: empty-folder toolbar, double-click ghost clicks, viewer close performance, mobile header overflow
 
 ## Screenshots
 
@@ -60,14 +70,28 @@ No database to install, no config file to fill in. Your files live under `./stor
 ## Features
 
 **Files**
-- Upload, download, move, rename, delete — drag & drop with configurable chunk size and concurrent uploads
+- Upload files **and folders** (folders preserve subdirectory structure) — drag & drop with configurable chunk size and concurrent uploads
 - Grid and list views, breadcrumb navigation, filename search
 - Folder download as streaming ZIP
+- Full keyboard navigation (arrows, Enter, Backspace, Space, Home/End)
 
 **Media preview**
-- Images: JPG, PNG, GIF, WebP, BMP, SVG, **HEIC / HEIF / AVIF / TIFF** (HEIC/TIFF converted server-side because browsers don't support them)
+- Images: JPG, PNG, GIF, WebP, BMP, SVG, **HEIC / HEIF / AVIF / TIFF** (HEIC/TIFF converted server-side because browsers don't support them) — with **wheel zoom** + **drag-pan**
 - Video: MP4, WebM, MOV, M4V in-browser. MKV/AVI/FLV/WMV show an honest "download required" prompt instead of pretending to play
 - Audio: HTML5 player, thumbnails generated from video frames
+
+**Trash**
+- Soft delete: removed files move to `.trash/` and stay for **14 days**
+- Restore in one click; permanent delete or "Empty trash" anytime
+- Counts toward your storage quota (no surprise reclaim)
+- Expired entries auto-purged on next trash open
+- Per-user: Members see only their own trash; Owner has root-level trash
+
+**Text & code preview**
+- In-browser viewer for `.txt .md .json .yaml .log .csv` and 40+ programming languages
+- Line numbers, encoding info, monospace
+- Up to 5 MB per file; fallback decoders for GBK / Big5 / Latin-1
+- LRU cache so re-opening is instant
 
 **Sharing**
 - Public share links with optional password and expiry
@@ -177,6 +201,7 @@ To set expectations before you try it:
 - **No transcoding** — unplayable formats are download-only (by design — transcoding belongs in Jellyfin/Plex)
 - **No RAW photo support** (CR2/NEF/ARW/DNG not previewable)
 - **No content deduplication, no full-text search inside files**
+- **WebDAV deletes are permanent** — they bypass the trash. The web UI is the safe path for recoverable deletes.
 
 ## Contributing
 
