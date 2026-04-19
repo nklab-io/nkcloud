@@ -17,7 +17,8 @@ from .auth import hash_password, verify_password
 from .database import (
     init_db, has_any_users, get_user_by_id, get_user_by_username,
     get_owner_user, record_audit, check_rate_limit, record_login_attempt,
-    cleanup_old_login_attempts, get_db,
+    cleanup_old_login_attempts, cleanup_old_share_verify_attempts,
+    reconcile_used_bytes, get_db,
 )
 from .models import LoginPayload, SetupPayload, RegisterPayload
 
@@ -54,11 +55,22 @@ def _pad_base64(value: str) -> str:
     return value + "=" * (-len(value) % 4)
 
 
+_TRUST_PROXY = os.getenv("NKCLOUD_TRUST_PROXY", "").lower() in ("1", "true", "yes")
+
+
 def get_client_ip(request: Request) -> str:
-    for header in ("cf-connecting-ip", "x-forwarded-for", "x-real-ip"):
-        raw = request.headers.get(header)
-        if raw:
-            return raw.split(",")[0].strip()
+    """Return the caller's IP.
+
+    Only consults forwarded headers if NKCLOUD_TRUST_PROXY is set — otherwise
+    an attacker hitting the app directly could spoof X-Forwarded-For to dodge
+    per-IP rate limits. For single-server deploys behind NPM set the env var;
+    for direct-exposure deploys leave it unset.
+    """
+    if _TRUST_PROXY:
+        for header in ("cf-connecting-ip", "x-forwarded-for", "x-real-ip"):
+            raw = request.headers.get(header)
+            if raw:
+                return raw.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
 
 
@@ -239,6 +251,15 @@ os.makedirs(os.path.join(config.FILE_ROOT, config.HOMES_DIR), exist_ok=True)
 
 # Cleanup old rate limit entries
 cleanup_old_login_attempts()
+cleanup_old_share_verify_attempts()
+
+# Drift-safety net: recompute used_bytes from disk on boot. Hot paths update
+# via deltas (routers.files._adjust_used_bytes); this catches skew from
+# crashes, manual edits, etc.
+try:
+    reconcile_used_bytes()
+except Exception:
+    pass
 
 # Start WebDAV server on port 8001
 from .webdav import start_webdav_server
@@ -308,8 +329,8 @@ def login(payload: LoginPayload, request: Request):
     client_ip = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "")[:300]
 
-    # Rate limit check
-    retry_after = check_rate_limit(client_ip)
+    # Rate limit check — dual axis (per-IP and per-username)
+    retry_after = check_rate_limit(client_ip, username=payload.username)
     if retry_after:
         record_login_attempt(client_ip, success=False, username=payload.username, user_agent=user_agent)
         raise HTTPException(status_code=429, detail=f"Too many failed attempts. Retry in {retry_after}s")

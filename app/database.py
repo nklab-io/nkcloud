@@ -94,6 +94,36 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id)")
 
+        # --- Chunked upload sessions (server-tracked, per-user) ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS upload_sessions (
+                upload_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                dest_rel_path TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                total_bytes INTEGER NOT NULL,
+                total_chunks INTEGER NOT NULL,
+                received_bytes INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL,
+                expires_at REAL NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_upload_sessions_user ON upload_sessions(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_upload_sessions_expires ON upload_sessions(expires_at)")
+
+        # --- Share verify throttle (separate axis from login_attempts) ---
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS share_verify_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ip TEXT NOT NULL,
+                token TEXT NOT NULL,
+                attempted_at REAL NOT NULL,
+                success INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_share_verify_ip ON share_verify_attempts(ip)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_share_verify_time ON share_verify_attempts(attempted_at)")
+
         conn.commit()
 
 
@@ -150,32 +180,99 @@ def record_audit(user_id: str | None, username: str | None, action: str,
         conn.commit()
 
 
-def check_rate_limit(ip: str) -> int | None:
-    """Check if IP is rate-limited. Returns retry_after seconds or None if allowed.
+def check_rate_limit(ip: str, username: str | None = None) -> int | None:
+    """Dual-axis rate limit: per-IP and per-username.
 
-    Counts failures in the window that occurred AFTER the most recent successful
-    login from the same IP — so a successful login resets the failure counter
-    without deleting historical rows (kept for the security log).
+    Previously a single axis (IP), and any successful login from that IP reset
+    the failure count — so an attacker with one valid account could brute-
+    force another by interleaving a success every few tries. Now:
+      - Per-IP: floor by the window cutoff only; successes do NOT reset.
+      - Per-username: also floor by the window cutoff; a successful login for
+        user A does not clear user B's failures.
+
+    Returns the max retry-after across both axes, or None if neither blocks.
     """
     cutoff = time.time() - config.LOGIN_WINDOW_SECONDS
+    retry_candidates = []
     with get_db() as conn:
-        last_success = conn.execute(
-            "SELECT MAX(attempted_at) FROM login_attempts WHERE ip = ? AND success = 1",
-            (ip,),
-        ).fetchone()[0] or 0
-        floor = max(cutoff, last_success)
         row = conn.execute(
             "SELECT COUNT(*), MAX(attempted_at) FROM login_attempts "
             "WHERE ip = ? AND attempted_at > ? AND success = 0",
-            (ip, floor),
+            (ip, cutoff),
+        ).fetchone()
+        fail_ip, last_fail_ip = row[0], row[1]
+        if fail_ip >= config.MAX_FAILED_ATTEMPTS_IP and last_fail_ip:
+            remaining = int(last_fail_ip + config.LOCKOUT_SECONDS - time.time())
+            if remaining > 0:
+                retry_candidates.append(remaining)
+
+        if username:
+            row_u = conn.execute(
+                "SELECT COUNT(*), MAX(attempted_at) FROM login_attempts "
+                "WHERE username = ? AND attempted_at > ? AND success = 0",
+                (username, cutoff),
+            ).fetchone()
+            fail_u, last_fail_u = row_u[0], row_u[1]
+            if fail_u >= config.MAX_FAILED_ATTEMPTS and last_fail_u:
+                remaining = int(last_fail_u + config.LOCKOUT_SECONDS - time.time())
+                if remaining > 0:
+                    retry_candidates.append(remaining)
+
+    return max(retry_candidates) if retry_candidates else None
+
+
+def check_share_verify_rate_limit(ip: str) -> int | None:
+    """Per-IP throttle for anonymous /api/public/{token}/verify attempts."""
+    cutoff = time.time() - config.SHARE_VERIFY_WINDOW_SECONDS
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*), MAX(attempted_at) FROM share_verify_attempts "
+            "WHERE ip = ? AND attempted_at > ? AND success = 0",
+            (ip, cutoff),
         ).fetchone()
         fail_count, last_fail = row[0], row[1]
-        if fail_count >= config.MAX_FAILED_ATTEMPTS and last_fail:
-            blocked_until = last_fail + config.LOCKOUT_SECONDS
-            remaining = int(blocked_until - time.time())
-            if remaining > 0:
-                return remaining
+    if fail_count >= config.SHARE_VERIFY_MAX_ATTEMPTS and last_fail:
+        remaining = int(last_fail + config.SHARE_VERIFY_LOCKOUT_SECONDS - time.time())
+        if remaining > 0:
+            return remaining
     return None
+
+
+def record_share_verify_attempt(ip: str, token: str, success: bool):
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO share_verify_attempts (ip, token, attempted_at, success) VALUES (?,?,?,?)",
+            (ip, token, time.time(), 1 if success else 0),
+        )
+        conn.commit()
+
+
+def cleanup_old_share_verify_attempts():
+    cutoff = time.time() - 30 * 86400
+    with get_db() as conn:
+        conn.execute("DELETE FROM share_verify_attempts WHERE attempted_at < ?", (cutoff,))
+        conn.commit()
+
+
+def reconcile_used_bytes():
+    """Recompute used_bytes for every non-owner user by walking their home dir.
+
+    Called once on startup as a drift-safety net. Hot paths update via deltas
+    (see routers.files._adjust_used_bytes); this catches any accumulated skew
+    from crashes, manual filesystem edits, etc.
+    """
+    import os as _os
+    from .services import filesystem as fs
+    with get_db() as conn:
+        users = conn.execute("SELECT id, username, role FROM users WHERE role != 'owner'").fetchall()
+    for u in users:
+        home_dir = _os.path.join(config.FILE_ROOT, config.HOMES_DIR, u["username"])
+        if not _os.path.isdir(home_dir):
+            continue
+        size = fs.get_directory_size(home_dir)
+        with get_db() as conn:
+            conn.execute("UPDATE users SET used_bytes = ? WHERE id = ?", (size, u["id"]))
+            conn.commit()
 
 
 def record_login_attempt(ip: str, success: bool, username: str | None = None, user_agent: str | None = None):

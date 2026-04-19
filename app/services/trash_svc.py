@@ -143,16 +143,17 @@ def list_trash(user: dict, display_prefix: Optional[str] = None) -> list[dict]:
     return entries
 
 
-def purge_expired(user: dict) -> int:
-    """Delete entries past retention. Returns count purged."""
+def purge_expired(user: dict) -> dict:
+    """Delete entries past retention. Returns {count, bytes_freed, ids}."""
     trash_dir = trash_dir_for_user(user)
     if not os.path.isdir(trash_dir):
-        return 0
+        return {"count": 0, "bytes_freed": 0, "ids": []}
     with _index_lock(trash_dir):
         index = _read_index(trash_dir)
         retention = timedelta(days=config.TRASH_RETENTION_DAYS)
         now = datetime.now(timezone.utc)
         removed = []
+        bytes_freed = 0
         for eid, meta in list(index.items()):
             try:
                 deleted_at = datetime.fromisoformat(meta["deleted_at"])
@@ -160,12 +161,13 @@ def purge_expired(user: dict) -> int:
                 continue
             if now - deleted_at >= retention:
                 _remove_entry(trash_dir, eid)
+                bytes_freed += int(meta.get("size") or 0)
                 removed.append(eid)
         if removed:
             for eid in removed:
                 index.pop(eid, None)
             _write_index(trash_dir, index)
-        return len(removed)
+        return {"count": len(removed), "bytes_freed": bytes_freed, "ids": removed}
 
 
 def _remove_entry(trash_dir: str, entry_id: str):
@@ -180,36 +182,39 @@ def _remove_entry(trash_dir: str, entry_id: str):
             pass
 
 
-def purge_ids(user: dict, entry_ids: list[str]) -> list[str]:
-    """Permanently delete specific entries. Returns ids removed."""
+def purge_ids(user: dict, entry_ids: list[str]) -> dict:
+    """Permanently delete specific entries. Returns {removed, bytes_freed}."""
     trash_dir = trash_dir_for_user(user)
     if not os.path.isdir(trash_dir):
-        return []
+        return {"removed": [], "bytes_freed": 0}
     with _index_lock(trash_dir):
         index = _read_index(trash_dir)
         removed = []
+        bytes_freed = 0
         for eid in entry_ids:
             if eid in index:
+                bytes_freed += int(index[eid].get("size") or 0)
                 _remove_entry(trash_dir, eid)
                 index.pop(eid, None)
                 removed.append(eid)
         if removed:
             _write_index(trash_dir, index)
-        return removed
+        return {"removed": removed, "bytes_freed": bytes_freed}
 
 
-def empty_trash(user: dict) -> int:
-    """Empty entire trash. Returns count removed."""
+def empty_trash(user: dict) -> dict:
+    """Empty entire trash. Returns {count, bytes_freed}."""
     trash_dir = trash_dir_for_user(user)
     if not os.path.isdir(trash_dir):
-        return 0
+        return {"count": 0, "bytes_freed": 0}
     with _index_lock(trash_dir):
         index = _read_index(trash_dir)
         count = len(index)
+        bytes_freed = sum(int(m.get("size") or 0) for m in index.values())
         for eid in list(index.keys()):
             _remove_entry(trash_dir, eid)
         _write_index(trash_dir, {})
-        return count
+        return {"count": count, "bytes_freed": bytes_freed}
 
 
 def restore_ids(user: dict, entry_ids: list[str]) -> dict:

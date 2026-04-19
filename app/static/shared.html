@@ -43,6 +43,15 @@
         const token = window.location.pathname.split('/s/')[1];
         const container = document.getElementById('content');
 
+        function escapeHtml(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
         function formatSize(bytes) {
             if (!bytes) return '';
             const u = ['B','KB','MB','GB','TB'];
@@ -53,9 +62,9 @@
 
         function renderFile(info) {
             container.innerHTML = `
-                <div class="share-title">${info.name}</div>
+                <div class="share-title">${escapeHtml(info.name)}</div>
                 <div class="share-meta">${formatSize(info.size)}</div>
-                <a href="/api/public/${token}/download" class="download-btn">
+                <a href="/api/public/${encodeURIComponent(token)}/download" class="download-btn">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     ${t('shared_page.download')}
                 </a>`;
@@ -64,17 +73,17 @@
         function renderDir(info) {
             const items = info.items || [];
             container.innerHTML = `
-                <div class="share-title">${info.name}</div>
+                <div class="share-title">${escapeHtml(info.name)}</div>
                 <div class="share-meta">${items.length} items</div>
-                <a href="/api/public/${token}/download" class="download-btn" style="margin-bottom:20px">
+                <a href="/api/public/${encodeURIComponent(token)}/download" class="download-btn" style="margin-bottom:20px">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     ${t('shared_page.download_all')}
                 </a>
                 <ul class="file-list">
                     ${items.map(f => `<li>
-                        <span class="name">${f.is_dir ? '&#128193; ' : ''}${f.name}</span>
+                        <span class="name">${f.is_dir ? '&#128193; ' : ''}${escapeHtml(f.name)}</span>
                         <span class="size">${f.is_dir ? '' : formatSize(f.size)}</span>
-                        ${!f.is_dir ? `<a href="/api/public/${token}/download?path=${encodeURIComponent(f.name)}">${t('shared_page.download')}</a>` : ''}
+                        ${!f.is_dir ? `<a href="/api/public/${encodeURIComponent(token)}/download?path=${encodeURIComponent(f.name)}">${t('shared_page.download')}</a>` : ''}
                     </li>`).join('')}
                 </ul>`;
         }

@@ -75,9 +75,12 @@ function formatDate(iso) {
 }
 
 function escapeHtml(s) {
-    const d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 function toast(msg, type = '') {
@@ -1255,8 +1258,28 @@ async function uploadChunked(file, fillEl, statusEl, targetDir) {
     const settings = getUploadSettings();
     const chunkSize = settings.chunkMb * 1024 * 1024;
     const concurrency = settings.concurrency;
-    const uploadId = crypto.randomUUID();
     const totalChunks = Math.ceil(file.size / chunkSize);
+
+    // /upload/init reserves quota and hands back a server-tracked session id.
+    // Previously the client picked a random uuid and started streaming chunks
+    // directly, which let any caller fill disk without ever completing.
+    const initFd = new FormData();
+    initFd.append('path', targetDir || state.currentPath);
+    initFd.append('filename', file.name);
+    initFd.append('total_bytes', file.size);
+    initFd.append('total_chunks', totalChunks);
+    const initRes = await fetch('/api/files/upload/init', {
+        method: 'POST',
+        body: initFd,
+        headers: { 'X-CSRF-Token': API._getCsrfToken() },
+    });
+    if (!initRes.ok) {
+        let detail = '';
+        try { detail = (await initRes.json()).detail || ''; } catch {}
+        throw new Error(detail || t('files.upload_init_fail') || `HTTP ${initRes.status}`);
+    }
+    const { upload_id: uploadId } = await initRes.json();
+
     let uploadedBytes = 0;
     let nextIndex = 0;
     let firstError = null;

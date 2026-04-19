@@ -22,6 +22,20 @@ MAX_SEARCH_RESULTS = 200
 THUMB_SIZE = (300, 300)
 PREVIEW_SIZE = (1920, 1920)
 
+# Chunked upload session bounds (enforced in /upload/init)
+UPLOAD_SESSION_TTL_SECONDS = 60 * 60 * 6  # 6h — reservation purge window
+MAX_UPLOAD_BYTES = int(os.environ.get("NKCLOUD_MAX_UPLOAD_BYTES", 50 * 1024**3))  # 50 GB default
+MAX_CHUNKS_PER_UPLOAD = 10000
+
+# Login rate limit (dual axis: per-IP and per-username)
+MAX_FAILED_ATTEMPTS_IP = 20
+# MAX_FAILED_ATTEMPTS kept for per-username; see above for per-IP
+
+# Share verify throttle (anonymous abuse)
+SHARE_VERIFY_MAX_ATTEMPTS = 10
+SHARE_VERIFY_WINDOW_SECONDS = 15 * 60
+SHARE_VERIFY_LOCKOUT_SECONDS = 15 * 60
+
 HOMES_DIR = "_homes"
 TRASH_DIR = ".trash"
 TRASH_RETENTION_DAYS = 14
