@@ -4,13 +4,13 @@ import shutil
 import time
 import uuid
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Form
 from fastapi.responses import FileResponse, StreamingResponse
 
 from ..models import MkdirPayload, RenamePayload, MovePayload, DeletePayload, TrashPayload
 from ..services import filesystem as fs
 from ..services import trash_svc
-from ..services.zip_svc import stream_zip
+from ..services.zip_svc import stream_zip, stream_zip_entries
 from ..permissions import (
     resolve_and_authorize, resolve_parent_and_authorize,
 )
@@ -181,7 +181,49 @@ def download_zip(request: Request, path: str):
     return StreamingResponse(
         stream_zip(abs_path, folder_name),
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{folder_name}.zip"'},
+        headers={"Content-Disposition": fs.content_disposition(f"{folder_name}.zip")},
+    )
+
+
+@router.get("/files/download-batch")
+def download_batch(request: Request, paths: list[str] = Query(...)):
+    """Stream a single zip built from multiple selected paths.
+
+    Browsers throttle / block consecutive popup downloads, so the toolbar
+    can't fire one window.open() per selection. This endpoint takes the
+    full selection as repeated `paths=` query params and zips whatever the
+    caller is allowed to read; unauthorized or missing paths are silently
+    skipped (already non-visible to that user).
+    """
+    user = _user(request)
+    if not paths:
+        raise HTTPException(status_code=400, detail="No paths")
+
+    entries: list[tuple[str, str]] = []
+    seen_names: dict[str, int] = {}
+    for p in paths:
+        try:
+            abs_path, _ = resolve_and_authorize(user, p, "read")
+        except HTTPException:
+            continue
+        if not os.path.exists(abs_path):
+            continue
+        arc_root = os.path.basename(abs_path) or "file"
+        # Disambiguate collisions when distinct paths share a basename.
+        n = seen_names.get(arc_root, 0)
+        seen_names[arc_root] = n + 1
+        if n:
+            stem, ext = os.path.splitext(arc_root)
+            arc_root = f"{stem} ({n}){ext}"
+        entries.append((abs_path, arc_root))
+
+    if not entries:
+        raise HTTPException(status_code=404, detail="Nothing to download")
+
+    return StreamingResponse(
+        stream_zip_entries(entries),
+        media_type="application/zip",
+        headers={"Content-Disposition": fs.content_disposition("nkcloud-download.zip")},
     )
 
 
@@ -447,14 +489,17 @@ def move_files(payload: MovePayload, request: Request):
         raise HTTPException(status_code=404, detail="Destination not found")
 
     moved = []
+    failed: list[dict] = []
     for p in payload.paths:
         try:
             src, _src_rel = resolve_and_authorize(user, p, "read")
             # Need delete permission on source too.
             _src_abs, src_canonical = resolve_and_authorize(user, p, "delete")
         except HTTPException:
+            failed.append({"path": p, "reason": "forbidden"})
             continue
         if not os.path.exists(src):
+            failed.append({"path": p, "reason": "not_found"})
             continue
         target = os.path.join(dest_dir, os.path.basename(src))
         if os.path.exists(target):
@@ -463,7 +508,11 @@ def move_files(payload: MovePayload, request: Request):
             while os.path.exists(target):
                 target = os.path.join(dest_dir, f"{base} ({counter}){ext}")
                 counter += 1
-        shutil.move(src, target)
+        try:
+            shutil.move(src, target)
+        except (OSError, shutil.Error):
+            failed.append({"path": p, "reason": "io_error"})
+            continue
         moved.append(os.path.basename(target))
 
     if moved:
@@ -472,7 +521,7 @@ def move_files(payload: MovePayload, request: Request):
                      detail=json.dumps({"files": moved}),
                      ip=_client_ip(request))
 
-    return {"moved": moved}
+    return {"moved": moved, "failed": failed}
 
 
 @router.delete("/files")
@@ -480,23 +529,28 @@ def delete_files(payload: DeletePayload, request: Request):
     """Soft-delete: move items to the user's trash."""
     user = _user(request)
     trashed = []
+    failed: list[dict] = []
     file_root = os.path.realpath(config.FILE_ROOT)
     user_home = os.path.join(file_root, config.HOMES_DIR, user["username"])
     for p in payload.paths:
         try:
             abs_path, canonical_rel = resolve_and_authorize(user, p, "delete")
         except HTTPException:
+            failed.append({"path": p, "reason": "forbidden"})
             continue
         if not os.path.exists(abs_path):
+            failed.append({"path": p, "reason": "not_found"})
             continue
         # Refuse to trash the file root or a user's home root —
         # would attempt to move a directory into itself.
         if abs_path == file_root or abs_path == user_home:
+            failed.append({"path": p, "reason": "root_protected"})
             continue
         try:
             trash_svc.move_to_trash(abs_path, canonical_rel, user)
             trashed.append(p)
         except (OSError, shutil.Error):
+            failed.append({"path": p, "reason": "io_error"})
             continue
 
     if trashed:
@@ -505,7 +559,7 @@ def delete_files(payload: DeletePayload, request: Request):
                      ip=_client_ip(request))
         # used_bytes unchanged — trash still counts against the user's home.
 
-    return {"deleted": trashed, "soft": True}
+    return {"deleted": trashed, "failed": failed, "soft": True}
 
 
 # --- Trash ---

@@ -1,6 +1,7 @@
 import os
 import stat
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 from .. import config
 
@@ -38,6 +39,21 @@ def relative_path(absolute_path: str) -> str:
     if absolute_path == root:
         return "/"
     return "/" + os.path.relpath(absolute_path, root)
+
+
+def content_disposition(filename: str, disposition: str = "attachment") -> str:
+    """Build an RFC 6266 / 5987 Content-Disposition header value.
+
+    Naked f-string interpolation of a user-controlled filename can break the
+    header (newline / quote injection) or yield mojibake on Safari for CJK
+    names. We always emit both the legacy `filename="..."` ASCII fallback and
+    the `filename*=UTF-8''...` form modern browsers prefer.
+    """
+    safe = "".join(c for c in filename if c.isprintable() and c not in "\r\n")
+    ascii_name = safe.encode("ascii", "replace").decode("ascii").replace("?", "_")
+    ascii_name = ascii_name.replace("\\", "\\\\").replace('"', '\\"')
+    encoded = quote(safe, safe="")
+    return f'{disposition}; filename="{ascii_name}"; filename*=UTF-8\'\'{encoded}'
 
 
 def is_trash_path(relative_path: str) -> bool:

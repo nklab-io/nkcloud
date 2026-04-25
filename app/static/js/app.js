@@ -393,12 +393,10 @@ function handleContextAction(action) {
         case 'download':
             if (paths.length === 1 && item && !item.is_dir) {
                 window.open(API.downloadUrl(paths[0]), '_blank');
-            } else {
-                paths.forEach(p => {
-                    const it = state.items.find(i => i.path === p);
-                    if (it?.is_dir) window.open(API.downloadZipUrl(p), '_blank');
-                    else window.open(API.downloadUrl(p), '_blank');
-                });
+            } else if (paths.length === 1 && item?.is_dir) {
+                window.open(API.downloadZipUrl(paths[0]), '_blank');
+            } else if (paths.length > 1) {
+                window.open(API.downloadBatchUrl(paths), '_blank');
             }
             break;
         case 'download-zip':
@@ -750,9 +748,14 @@ function confirmDelete(paths) {
 
 window._doDelete = async () => {
     try {
-        await API.deleteFiles(window._deletePaths);
+        const res = await API.deleteFiles(window._deletePaths);
         closeModal();
-        toast(t('modal.deleted'));
+        const failed = (res && res.failed) || [];
+        if (failed.length) {
+            toast(t('modal.deleted_partial', {ok: (res.deleted || []).length, fail: failed.length}), 'error');
+        } else {
+            toast(t('modal.deleted'));
+        }
         navigateTo(state.currentPath);
     } catch (e) { toast(e.message, 'error'); }
 };
@@ -773,9 +776,14 @@ window._doMove = async () => {
     const dest = document.getElementById('moveDestInput').value.trim();
     if (!dest) return;
     try {
-        await API.move(window._movePaths, dest);
+        const res = await API.move(window._movePaths, dest);
         closeModal();
-        toast(t('modal.moved'));
+        const failed = (res && res.failed) || [];
+        if (failed.length) {
+            toast(t('modal.moved_partial', {ok: (res.moved || []).length, fail: failed.length}), 'error');
+        } else {
+            toast(t('modal.moved'));
+        }
         navigateTo(state.currentPath);
     } catch (e) { toast(e.message, 'error'); }
 };
@@ -1415,11 +1423,16 @@ window._doNewFolder = async () => {
 };
 
 window._toolbarDownload = () => {
-    [...state.selected].forEach(p => {
-        const item = state.items.find(i => i.path === p);
-        if (item?.is_dir) window.open(API.downloadZipUrl(p), '_blank');
-        else window.open(API.downloadUrl(p), '_blank');
-    });
+    const paths = [...state.selected];
+    if (paths.length === 0) return;
+    if (paths.length === 1) {
+        const item = state.items.find(i => i.path === paths[0]);
+        if (item?.is_dir) window.open(API.downloadZipUrl(paths[0]), '_blank');
+        else window.open(API.downloadUrl(paths[0]), '_blank');
+        return;
+    }
+    // Multi-select: one streaming zip beats N popups (browser blocks them).
+    window.open(API.downloadBatchUrl(paths), '_blank');
 };
 
 window._toolbarMove = () => openMoveDialog([...state.selected]);

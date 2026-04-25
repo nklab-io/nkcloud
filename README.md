@@ -19,7 +19,7 @@ I'm using it every day to host my own files. Maybe you'll like it too.
 
 ## Status
 
-**v0.2.0 — adding the bits I missed in v0.1, still a personal project.**
+**v0.2.2 — folder zip + batch download bug fixes on top of the v0.2.1 security pass.**
 
 - ✅ Daily-driven on my homelab (Linux host, used from macOS / iPhone Safari / iPadOS)
 - ✅ Tested: Chrome, Safari, Firefox on desktop + mobile
@@ -28,6 +28,13 @@ I'm using it every day to host my own files. Maybe you'll like it too.
 - ⚠️ Expect rough edges. Open an issue or PR and I'll take a look
 
 If you need rock-solid multi-tenant collaboration, use Nextcloud. If you need every protocol under the sun, use Copyparty. If you want something small and nice-looking to self-host your own files, give this a try.
+
+## What's new in v0.2.2
+
+- 🐛 **Folder ZIP download was producing corrupted archives** — the streaming buffer truncated mid-write, throwing off the central-directory offsets. Public folder shares hit the same path. Fixed.
+- 🐛 **"Select all → Download" only downloaded one file** — the toolbar fired one `window.open()` per selection and modern browsers block all but the first popup. Replaced with a single `/api/files/download-batch` endpoint that streams one ZIP for the whole selection.
+- 🌏 **Non-ASCII ZIP filenames work everywhere** — `Content-Disposition` now emits both an ASCII fallback and the RFC 5987 `filename*=UTF-8''…` form, so Safari stops mangling Chinese / Japanese folder names.
+- 📋 **Partial failures are visible** — `/files/move` and `DELETE /files` now return `{moved/deleted, failed:[{path,reason}]}`; the UI toasts "N moved, M failed" instead of silently swallowing the misses.
 
 ## What's new in v0.2.0
 

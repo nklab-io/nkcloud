@@ -235,6 +235,11 @@ const API = {
         return `/api/files/download-zip?path=${encodeURIComponent(path)}`;
     },
 
+    downloadBatchUrl(paths) {
+        const qs = paths.map(p => `paths=${encodeURIComponent(p)}`).join('&');
+        return `/api/files/download-batch?${qs}`;
+    },
+
     streamUrl(path) {
         return `/api/files/stream?path=${encodeURIComponent(path)}`;
     },

@@ -347,7 +347,7 @@ def public_download(token: str, request: Request, path: str = ""):
         return StreamingResponse(
             stream_zip(abs_path, folder_name),
             media_type="application/zip",
-            headers={"Content-Disposition": f'attachment; filename="{folder_name}.zip"'},
+            headers={"Content-Disposition": fs.content_disposition(f"{folder_name}.zip")},
         )
     else:
         return FileResponse(
