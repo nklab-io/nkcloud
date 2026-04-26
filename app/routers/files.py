@@ -201,12 +201,16 @@ def download_batch(request: Request, paths: list[str] = Query(...)):
 
     entries: list[tuple[str, str]] = []
     seen_names: dict[str, int] = {}
+    skipped_forbidden = 0
+    skipped_missing = 0
     for p in paths:
         try:
             abs_path, _ = resolve_and_authorize(user, p, "read")
         except HTTPException:
+            skipped_forbidden += 1
             continue
         if not os.path.exists(abs_path):
+            skipped_missing += 1
             continue
         arc_root = os.path.basename(abs_path) or "file"
         # Disambiguate collisions when distinct paths share a basename.
@@ -223,7 +227,16 @@ def download_batch(request: Request, paths: list[str] = Query(...)):
     return StreamingResponse(
         stream_zip_entries(entries),
         media_type="application/zip",
-        headers={"Content-Disposition": fs.content_disposition("nkcloud-download.zip")},
+        headers={
+            "Content-Disposition": fs.content_disposition("nkcloud-download.zip"),
+            # Counts let an admin diagnose "my zip is missing files" without
+            # rummaging through audit logs; the streaming body has no room
+            # for a structured failed[] like move/delete return.
+            "X-Nkcloud-Total": str(len(paths)),
+            "X-Nkcloud-Included": str(len(entries)),
+            "X-Nkcloud-Skipped-Forbidden": str(skipped_forbidden),
+            "X-Nkcloud-Skipped-Missing": str(skipped_missing),
+        },
     )
 
 

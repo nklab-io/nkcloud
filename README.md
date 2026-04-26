@@ -19,7 +19,7 @@ I'm using it every day to host my own files. Maybe you'll like it too.
 
 ## Status
 
-**v0.2.2 — folder zip + batch download bug fixes on top of the v0.2.1 security pass.**
+**v0.2.3 — large-file streaming + batch-download diagnostics on top of v0.2.2.**
 
 - ✅ Daily-driven on my homelab (Linux host, used from macOS / iPhone Safari / iPadOS)
 - ✅ Tested: Chrome, Safari, Firefox on desktop + mobile
@@ -28,6 +28,11 @@ I'm using it every day to host my own files. Maybe you'll like it too.
 - ⚠️ Expect rough edges. Open an issue or PR and I'll take a look
 
 If you need rock-solid multi-tenant collaboration, use Nextcloud. If you need every protocol under the sun, use Copyparty. If you want something small and nice-looking to self-host your own files, give this a try.
+
+## What's new in v0.2.3
+
+- 🚿 **Large files no longer buffer fully in RAM before streaming** — the zip writer used to read each source completely into the in-memory drain buffer before any byte left the server. A 5 GB media file is now copied 1 MB at a time and drained between chunks, so peak memory stays flat regardless of file size.
+- 🔎 **`download-batch` skips are diagnosable** — added `X-Nkcloud-Total` / `X-Nkcloud-Included` / `X-Nkcloud-Skipped-Forbidden` / `X-Nkcloud-Skipped-Missing` response headers. Streaming responses can't carry a structured `failed[]` like move/delete do, but the counts let an admin reproduce a "my zip is missing files" report without rummaging through audit logs.
 
 ## What's new in v0.2.2
 

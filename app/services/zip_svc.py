@@ -58,19 +58,34 @@ def _walk_entries(abs_path: str, arc_root: str) -> Iterable[Tuple[str, str]]:
             yield full, arc
 
 
+_COPY_CHUNK = 1024 * 1024  # 1 MB — drain cadence inside a single big file
+
+
 def stream_zip_entries(entries: Iterable[Tuple[str, str]]) -> Generator[bytes, None, None]:
     """Stream a zip archive built from (abs_path, arc_root) pairs.
 
     Each entry may be a single file or a directory tree; directories land
     under arc_root/. ZIP_STORED keeps CPU low — media downloads are bandwidth
-    bound anyway.
+    bound anyway. We copy each source 1 MB at a time and drain after every
+    chunk so a 5 GB media file no longer buffers fully in RAM before any
+    bytes hit the wire.
     """
     buf = _StreamBuffer()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED, allowZip64=True) as zf:
         for abs_path, arc_root in entries:
             for full, arc in _walk_entries(abs_path, arc_root):
                 try:
-                    zf.write(full, arc)
+                    zinfo = zipfile.ZipInfo.from_file(full, arc)
+                    zinfo.compress_type = zipfile.ZIP_STORED
+                    with open(full, "rb") as src, zf.open(zinfo, "w", force_zip64=True) as dest:
+                        while True:
+                            data = src.read(_COPY_CHUNK)
+                            if not data:
+                                break
+                            dest.write(data)
+                            chunk = buf.drain()
+                            if chunk:
+                                yield chunk
                 except (PermissionError, OSError):
                     continue
                 chunk = buf.drain()
