@@ -261,9 +261,11 @@ try:
 except Exception:
     pass
 
-# Start WebDAV server on port 8001
-from .webdav import start_webdav_server
-_webdav_server = start_webdav_server()
+# Start WebDAV server on port 8001 unless tests or constrained deploys disable it.
+_webdav_server = None
+if os.getenv("NKCLOUD_DISABLE_WEBDAV", "").lower() not in ("1", "true", "yes"):
+    from .webdav import start_webdav_server
+    _webdav_server = start_webdav_server()
 
 
 
@@ -283,6 +285,8 @@ def setup(payload: SetupPayload, request: Request):
     username = payload.username.strip()
     if not username or not re.match(r'^[a-zA-Z0-9_-]{2,32}$', username):
         raise HTTPException(status_code=400, detail="Invalid username (2-32 chars, alphanumeric/_/-)")
+    if len(payload.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
 
     user_id = str(uuid.uuid4())
     pw_hash = hash_password(payload.password)
@@ -424,6 +428,8 @@ def register_via_invite(token: str, payload: RegisterPayload, request: Request):
     username = payload.username.strip()
     if not username or not re.match(r'^[a-zA-Z0-9_-]{2,32}$', username):
         raise HTTPException(status_code=400, detail="Invalid username (2-32 chars, alphanumeric/_/-)")
+    if len(payload.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
 
     # Reserved names
     if username.lower() in ("admin", "root", "system", config.HOMES_DIR):

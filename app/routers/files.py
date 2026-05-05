@@ -112,6 +112,16 @@ def _release_upload_session(upload_id: str):
         conn.commit()
 
 
+def _abort_upload_session(upload_id: str, chunk_dir: str, partial_path: str | None = None):
+    if partial_path and os.path.exists(partial_path):
+        try:
+            os.remove(partial_path)
+        except OSError:
+            pass
+    shutil.rmtree(chunk_dir, ignore_errors=True)
+    _release_upload_session(upload_id)
+
+
 def _received_bytes(upload_id: str) -> int:
     with get_db() as conn:
         row = conn.execute(
@@ -402,7 +412,7 @@ def complete_chunked_upload(
 
     # Re-authorize the destination every time — role/permissions may have
     # changed between /init and /complete.
-    abs_dir, canonical_rel = resolve_and_authorize(user, session["dest_rel"], "upload")
+    abs_dir, canonical_rel = resolve_and_authorize(user, session["dest_rel_path"], "upload")
     if not os.path.isdir(abs_dir):
         _release_upload_session(upload_id)
         raise HTTPException(status_code=404, detail="Directory not found")
@@ -413,18 +423,24 @@ def complete_chunked_upload(
         raise HTTPException(status_code=400, detail="Upload not found")
 
     total_size = 0
+    missing_chunks = []
     for i in range(session["total_chunks"]):
         chunk_path = os.path.join(chunk_dir, f"{i:06d}")
         if os.path.exists(chunk_path):
             total_size += os.path.getsize(chunk_path)
+        else:
+            missing_chunks.append(i)
+
+    if missing_chunks:
+        _abort_upload_session(upload_id, chunk_dir)
+        raise HTTPException(status_code=400, detail=f"Missing chunk {missing_chunks[0]}")
 
     # Final ceiling check: assembled file cannot exceed the declared size
     # (plus 1 MB slack for multipart overhead). Defends against a client
     # spreading a lying upload across many chunks that each individually pass
     # the per-chunk cap.
     if total_size > session["total_bytes"] + 1024 * 1024:
-        shutil.rmtree(chunk_dir, ignore_errors=True)
-        _release_upload_session(upload_id)
+        _abort_upload_session(upload_id, chunk_dir)
         raise HTTPException(status_code=413, detail="Assembled size exceeds declared total")
 
     safe_name = session["filename"]
@@ -436,18 +452,18 @@ def complete_chunked_upload(
             dest = os.path.join(abs_dir, f"{base} ({counter}){ext}")
             counter += 1
 
-    with open(dest, "wb") as out:
-        for i in range(session["total_chunks"]):
-            chunk_path = os.path.join(chunk_dir, f"{i:06d}")
-            if not os.path.exists(chunk_path):
-                _release_upload_session(upload_id)
-                raise HTTPException(status_code=400, detail=f"Missing chunk {i}")
-            with open(chunk_path, "rb") as cf:
-                while data := cf.read(1024 * 1024):
-                    out.write(data)
+    try:
+        with open(dest, "wb") as out:
+            for i in range(session["total_chunks"]):
+                chunk_path = os.path.join(chunk_dir, f"{i:06d}")
+                with open(chunk_path, "rb") as cf:
+                    while data := cf.read(1024 * 1024):
+                        out.write(data)
+    except OSError:
+        _abort_upload_session(upload_id, chunk_dir, dest)
+        raise HTTPException(status_code=500, detail="Could not assemble upload")
 
-    shutil.rmtree(chunk_dir, ignore_errors=True)
-    _release_upload_session(upload_id)
+    _abort_upload_session(upload_id, chunk_dir)
 
     record_audit(user["id"], user["username"], "upload", target_path=canonical_rel,
                  detail=json.dumps({"file": os.path.basename(dest), "size": total_size}),

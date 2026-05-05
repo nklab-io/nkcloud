@@ -3,7 +3,7 @@ import os
 from fastapi import APIRouter, HTTPException, Request
 
 from ..services import filesystem as fs
-from ..permissions import remap_path_for_user, check_permission
+from ..permissions import resolve_and_authorize
 from .. import config
 
 router = APIRouter(tags=["search"])
@@ -18,13 +18,7 @@ def search_files(request: Request, q: str, path: str = "/"):
     if not q or len(q) < 2:
         raise HTTPException(status_code=400, detail="Query too short")
 
-    path = remap_path_for_user(path, user)
-    check_permission(user, "read", path)
-
-    try:
-        abs_path = fs.safe_resolve(path)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid path")
+    abs_path, _ = resolve_and_authorize(user, path, "read")
     if not os.path.isdir(abs_path):
         raise HTTPException(status_code=404, detail="Directory not found")
 
@@ -32,14 +26,22 @@ def search_files(request: Request, q: str, path: str = "/"):
     results = []
     home_prefix = f"/{config.HOMES_DIR}/{user['username']}" if user["role"] == "user" else None
 
-    for root, dirs, files in os.walk(abs_path):
-        dirs[:] = [d for d in dirs if not d.startswith(".")]
+    search_root = os.path.realpath(abs_path)
+    for root, dirs, files in os.walk(search_root, followlinks=False):
+        dirs[:] = [
+            d for d in dirs
+            if not d.startswith(".")
+            and fs.is_within_root(os.path.join(root, d), search_root)
+        ]
         for name in dirs + files:
             if query_lower in name.lower():
                 full = os.path.join(root, name)
+                real_full = os.path.realpath(full)
+                if not fs.is_within_root(real_full, search_root):
+                    continue
                 is_dir = os.path.isdir(full)
                 try:
-                    st = os.stat(full)
+                    st = os.stat(real_full)
                 except OSError:
                     continue
                 rel_path = fs.relative_path(full)

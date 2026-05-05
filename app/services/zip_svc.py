@@ -3,6 +3,8 @@ import zipfile
 from io import BytesIO
 from typing import Generator, Iterable, Tuple
 
+from .filesystem import is_within_root
+
 
 class _StreamBuffer:
     """File-like sink that lets ZipFile write while we drain.
@@ -43,19 +45,29 @@ class _StreamBuffer:
 
 def _walk_entries(abs_path: str, arc_root: str) -> Iterable[Tuple[str, str]]:
     """Yield (abs_path, arc_path) pairs for a file or directory tree."""
-    if os.path.isfile(abs_path):
-        yield abs_path, arc_root
+    abs_real = os.path.realpath(abs_path)
+    guard_root = abs_real if os.path.isdir(abs_real) else os.path.dirname(abs_real)
+    if os.path.isfile(abs_real):
+        if is_within_root(abs_real, guard_root):
+            yield abs_real, arc_root
         return
-    if not os.path.isdir(abs_path):
+    if not os.path.isdir(abs_real):
         return
-    for root, dirs, files in os.walk(abs_path):
-        dirs[:] = [d for d in dirs if not d.startswith(".")]
+    for root, dirs, files in os.walk(abs_real, followlinks=False):
+        dirs[:] = [
+            d for d in dirs
+            if not d.startswith(".")
+            and is_within_root(os.path.join(root, d), guard_root)
+        ]
         for fname in files:
             if fname.startswith("."):
                 continue
             full = os.path.join(root, fname)
-            arc = os.path.join(arc_root, os.path.relpath(full, abs_path))
-            yield full, arc
+            full_real = os.path.realpath(full)
+            if not is_within_root(full_real, guard_root):
+                continue
+            arc = os.path.join(arc_root, os.path.relpath(full, abs_real))
+            yield full_real, arc
 
 
 _COPY_CHUNK = 1024 * 1024  # 1 MB — drain cadence inside a single big file

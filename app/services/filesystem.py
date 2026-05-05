@@ -33,6 +33,13 @@ def safe_resolve(relative_path: str) -> str:
     return full
 
 
+def is_within_root(path: str, root: str) -> bool:
+    """Return True when path resolves to root itself or inside root."""
+    real_path = os.path.realpath(path)
+    real_root = os.path.realpath(root)
+    return real_path == real_root or real_path.startswith(real_root + os.sep)
+
+
 def relative_path(absolute_path: str) -> str:
     """Convert absolute path back to relative path from FILE_ROOT."""
     root = os.path.realpath(config.FILE_ROOT)
@@ -102,6 +109,8 @@ def list_directory(dir_path: str) -> list[dict]:
         with os.scandir(dir_path) as it:
             for entry in it:
                 if entry.name.startswith("."):
+                    continue
+                if not is_within_root(entry.path, dir_path):
                     continue
                 try:
                     st = entry.stat(follow_symlinks=True)

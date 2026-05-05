@@ -37,10 +37,11 @@ def _require_owner_or_admin(request: Request) -> dict:
 
 
 def _get_client_ip(request: Request) -> str:
-    for header in ("cf-connecting-ip", "x-forwarded-for", "x-real-ip"):
-        raw = request.headers.get(header)
-        if raw:
-            return raw.split(",")[0].strip()
+    if os.getenv("NKCLOUD_TRUST_PROXY", "").lower() in ("1", "true", "yes"):
+        for header in ("cf-connecting-ip", "x-forwarded-for", "x-real-ip"):
+            raw = request.headers.get(header)
+            if raw:
+                return raw.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
 
 

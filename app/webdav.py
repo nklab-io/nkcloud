@@ -81,7 +81,7 @@ class PerUserFilesystemProvider(FilesystemProvider):
             root = os.path.realpath(config.FILE_ROOT)
 
         path_parts = path.strip("/").split("/")
-        file_path = os.path.abspath(os.path.join(root, *path_parts))
+        file_path = os.path.realpath(os.path.join(root, *path_parts))
         if file_path != root and not file_path.startswith(root + os.sep):
             raise DAVError(HTTP_FORBIDDEN)
         return file_path
